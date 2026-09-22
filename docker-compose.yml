@@ -41,6 +41,9 @@ services:
     volumes:
       - jellyfin-config:/config
       - media:/media:ro
+      # Ships the Jellybird Jellyfin plugin (built from the sibling
+      # jellyfin-plugin-jellybird repo) straight into Jellyfin's plugin dir.
+      - ./plugin:/config/plugins/Jellybird_1.0.0.0:z
     # Jellyfin reaches jellybird over the compose network using the
     # external_url above; no extra config needed.
 
