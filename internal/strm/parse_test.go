@@ -101,6 +101,41 @@ func TestParse(t *testing.T) {
 			"[Yameii] Frieren Beyond Journey's End - S02E04 [English Dub] [CR WEB-DL 1080p H264 AAC] [593CA663] (Sousou no Frieren Season 2 | S2).mkv",
 			Parsed{Kind: KindTV, Title: "Frieren Beyond Journey's End", ShowTitle: "Frieren Beyond Journey's End", Season: 2, Episode: 4},
 		},
+		// Fansub bare dash-episode, no season digit at all (regression: used
+		// to read as a bare-title movie, one "movie" per episode file).
+		{
+			"[SubsPlease] Takopii no Genzai - 02 (1080p) [C84AB672].mkv",
+			Parsed{Kind: KindTV, Title: "Takopii no Genzai", ShowTitle: "Takopii no Genzai", Season: 1, Episode: 2},
+		},
+		{
+			"Pokémon - 73 - To Master The Onixpected   [DarkDream].mkv",
+			Parsed{Kind: KindTV, Title: "Pokémon", ShowTitle: "Pokémon", Season: 1, Episode: 73},
+		},
+		// Sequel numbers still stay part of the title when there's no dash
+		// (regression guard against fansubDashEpRe over-matching).
+		{
+			"Zombieland.2.2019.1080p.BluRay.x264-RARBG.mkv",
+			Parsed{Kind: KindMovie, Title: "Zombieland 2", Year: 2019},
+		},
+		// Batch/complete-series releases that name a range instead of a
+		// single season number (regression: every episode filed as its own
+		// movie).
+		{
+			"Beyblade Burst Evolution 1-51 Batch (Dual Audio English and Japanese -1-21 Subs 22-51 no Subs-)",
+			Parsed{Kind: KindTV, Title: "Beyblade Burst Evolution", ShowTitle: "Beyblade Burst Evolution"},
+		},
+		{
+			"Beyblade Burst Complete Series 1-6 (English Subbed Only)",
+			Parsed{Kind: KindTV, Title: "Beyblade Burst", ShowTitle: "Beyblade Burst"},
+		},
+		{
+			"Pokemon (1998) Seasons 1-14 -E.Rev 480p x264 MKV",
+			Parsed{Kind: KindTV, Title: "Pokemon", ShowTitle: "Pokemon", Year: 1998},
+		},
+		{
+			"DRAGON BALL SUPER (2015-2018) - Complete TV Series and 3 Movies - 1080p DUAL AUDIO x264",
+			Parsed{Kind: KindTV, Title: "DRAGON BALL SUPER", ShowTitle: "DRAGON BALL SUPER", Year: 2015},
+		},
 	}
 	for _, tc := range cases {
 		got := Parse(tc.in)

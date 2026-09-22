@@ -42,6 +42,25 @@ var (
 	dashEpRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[\(])s(\d{1,2})\s*-\s*(\d{1,3})(?:$|[\.\_\s\-\[\(\)\]])`)
 	// seasonPackRe matches "Season 1", "S01", "Season.1".
 	seasonPackRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[])(?:s|season[\.\_\s]?)(\d{1,2})(?:$|[\.\_\s\-\]])`)
+	// seriesRangeRe matches "Season(s) N-M" / "Series N-M": batch/complete
+	// releases that describe an episode or season range instead of the
+	// single-number form seasonPackRe handles ("Seasons 1-14", "Complete
+	// Series 1-6"). The range itself isn't used (per-file episode numbers
+	// come from bareEpisodeRe via EpisodeFromFileName); it only confirms TV.
+	seriesRangeRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[\(])(?:seasons?|series)[\.\_\s]+(\d{1,3})[\.\_\s\-]+(\d{1,3})(?:$|[\.\_\s\-\]\)])`)
+	// rangeBatchRe matches the same episode-range idiom with the range
+	// before the keyword instead of after ("1-51 Batch", "1-6 Complete").
+	rangeBatchRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[\(])(\d{1,3})[\.\_\s\-]+(\d{1,3})[\.\_\s]+(?:batch|complete)(?:$|[\.\_\s\-\]\)])`)
+	// completeSeriesRe is a keyword-only fallback for batch releases that
+	// name no numeric range at all ("... Complete TV Series ...").
+	completeSeriesRe = regexp.MustCompile(`(?i)\bcomplete[\.\_\s]+tv[\.\_\s]+series\b`)
+	// fansubDashEpRe matches the common fansub convention of a bare
+	// dash-separated episode number with no season marker at all
+	// ("Show - 02 (1080p) [hash]", "Show - 73 - Episode Title"). Season is
+	// assumed to be 1. Unlike dashEpRe, no leading "s\d" is required, so
+	// this must stay narrower (separators required on both sides of the
+	// dash) to avoid swallowing "Title - Subtitle"-style movie names.
+	fansubDashEpRe = regexp.MustCompile(`(?i)[\.\_\s]-[\.\_\s](\d{1,3})(?:[\.\_\s]|$)`)
 	// leadingTagRe strips a "[ReleaseGroup]" prefix some fansub groups use
 	// (e.g. "[SubsPlease] Show..."). It has no space before the "]", so the
 	// normal edge-trimming in cleanTitle can't remove it on its own.
@@ -121,11 +140,52 @@ func Parse(name string) Parsed {
 		return p
 	}
 
+	// Fansub-style "Show - 02 (1080p) [hash]" (bare dash episode, no
+	// season digit at all — season assumed 1).
+	if m := fansubDashEpRe.FindStringSubmatch(base); m != nil {
+		p.Kind = KindTV
+		p.Season = 1
+		p.Episode = atoi(m[1])
+		p.ShowTitle = cleanTitle(base, m[0])
+		p.Title = p.ShowTitle
+		return p
+	}
+
 	// Season pack (no episode).
 	if m := seasonPackRe.FindStringSubmatch(base); m != nil {
 		p.Kind = KindTV
 		p.Season = atoi(m[1])
 		p.ShowTitle = cleanTitle(base, m[0])
+		p.ShowTitle = stripYear(p.ShowTitle)
+		p.Title = p.ShowTitle
+		return p
+	}
+
+	// Batch/complete-series releases that name an episode or season range
+	// instead of a single season number ("Seasons 1-14", "1-51 Batch",
+	// "Complete TV Series"). Per-file episode numbers still come from
+	// EpisodeFromFileName in the writer's rescue path; this only confirms
+	// the release is TV so that rescue actually fires.
+	if m := seriesRangeRe.FindStringSubmatch(base); m != nil {
+		p.Kind = KindTV
+		p.ShowTitle = cleanTitle(base, m[0])
+		p.Year = findYear(p.ShowTitle)
+		p.ShowTitle = stripYear(p.ShowTitle)
+		p.Title = p.ShowTitle
+		return p
+	}
+	if m := rangeBatchRe.FindStringSubmatch(base); m != nil {
+		p.Kind = KindTV
+		p.ShowTitle = cleanTitle(base, m[0])
+		p.Year = findYear(p.ShowTitle)
+		p.ShowTitle = stripYear(p.ShowTitle)
+		p.Title = p.ShowTitle
+		return p
+	}
+	if m := completeSeriesRe.FindStringSubmatch(base); m != nil {
+		p.Kind = KindTV
+		p.ShowTitle = cleanTitle(base, m[0])
+		p.Year = findYear(p.ShowTitle)
 		p.ShowTitle = stripYear(p.ShowTitle)
 		p.Title = p.ShowTitle
 		return p
