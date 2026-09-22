@@ -304,8 +304,11 @@ func (e *Engine) pickProvider(ctx context.Context, infoHash, preferred string) (
 }
 
 // AddBest searches, picks the best cached candidate (or falls back to
-// best-seeded) and adds it. Used by the watchlist pipeline.
-func (e *Engine) AddBest(ctx context.Context, mediaType, imdbID string, season, episode int) (AddResult, SearchCandidate, error) {
+// best-seeded) and adds it. Used by the watchlist pipeline. tmdbID, when
+// non-zero, is resolved to a canonical title/year so the resulting STRM
+// lands under the same name Jellyseerr/TMDB use, instead of whatever the
+// raw release name parses to.
+func (e *Engine) AddBest(ctx context.Context, mediaType, imdbID string, tmdbID, season, episode int) (AddResult, SearchCandidate, error) {
 	cands, err := e.SearchTorrents(ctx, mediaType, imdbID, season, episode)
 	if err != nil {
 		return AddResult{}, SearchCandidate{}, err
@@ -314,8 +317,24 @@ func (e *Engine) AddBest(ctx context.Context, mediaType, imdbID string, season, 
 		return AddResult{}, SearchCandidate{}, errors.New("no candidates found")
 	}
 	best := cands[0] // sorted cached-first, then seeders
-	// TODO: thread the TMDB title through from the watchlist request so
-	// auto-added episodes get the same naming consistency as manual adds.
-	res, err := e.AddMagnet(ctx, best.Magnet, best.Hash, best.Provider, nil)
+
+	var hint *store.Hint
+	if e.meta != nil && tmdbID != 0 {
+		if d, err := e.meta.Details(ctx, mediaType, tmdbID); err != nil {
+			e.log.Warn("tmdb details lookup failed; falling back to release-name parsing",
+				"media_type", mediaType, "tmdb_id", tmdbID, "err", err)
+		} else {
+			kind := "movie"
+			if mediaType == "tv" {
+				kind = "tv"
+			}
+			hint = &store.Hint{
+				Kind: kind, Title: d.DisplayTitle(), Year: d.Year(),
+				Season: season, Episode: episode,
+			}
+		}
+	}
+
+	res, err := e.AddMagnet(ctx, best.Magnet, best.Hash, best.Provider, hint)
 	return res, best, err
 }

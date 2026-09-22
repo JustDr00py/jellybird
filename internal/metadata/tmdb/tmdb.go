@@ -167,6 +167,23 @@ func (c *Client) IMDbID(ctx context.Context, mediaType string, tmdbID int) (stri
 	return out.IMDbID, nil
 }
 
+// Details fetches the canonical title/year for a known TMDB id, used to
+// build a naming hint (e.g. for watchlist-driven adds) without a text search.
+func (c *Client) Details(ctx context.Context, mediaType string, tmdbID int) (Result, error) {
+	var path string
+	if mediaType == "tv" {
+		path = fmt.Sprintf("/tv/%d", tmdbID)
+	} else {
+		path = fmt.Sprintf("/movie/%d", tmdbID)
+	}
+	var r Result
+	if err := c.get(ctx, path, url.Values{"language": {c.language}}, &r); err != nil {
+		return Result{}, err
+	}
+	r.MediaType = mediaType
+	return r, nil
+}
+
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
 	if q == nil {
 		q = url.Values{}

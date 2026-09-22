@@ -141,7 +141,7 @@ func (c *Client) process(ctx context.Context, r jellyseerrRequest) {
 	}
 
 	c.track(ctx, r, "pending", "")
-	res, _, err := c.engine.AddBest(ctx, r.Media.MediaType, r.Media.IMDbID, season, r.Episode)
+	res, _, err := c.engine.AddBest(ctx, r.Media.MediaType, r.Media.IMDbID, r.Media.TMDBID, season, r.Episode)
 	if err != nil {
 		c.log.Warn("watchlist add failed", "request", sourceID, "err", err)
 		c.track(ctx, r, "failed", err.Error())
