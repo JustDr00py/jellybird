@@ -27,7 +27,7 @@ func TestAccountInfo(t *testing.T) {
 			t.Errorf("auth = %q", got)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"username": "alice", "premium": 1, "expiration": "2027-01-01T00:00:00Z",
+			"username": "alice", "premium": 5820653, "expiration": "2027-01-01T00:00:00Z",
 		})
 	})
 	acct, err := c.AccountInfo(context.Background())
@@ -35,6 +35,21 @@ func TestAccountInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if acct.Username != "alice" || acct.PremiumUntil.IsZero() {
+		t.Errorf("acct = %+v", acct)
+	}
+}
+
+func TestAccountInfoFree(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"username": "bob", "premium": 0, "expiration": "",
+		})
+	})
+	acct, err := c.AccountInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acct.Username != "bob" || !acct.PremiumUntil.IsZero() {
 		t.Errorf("acct = %+v", acct)
 	}
 }

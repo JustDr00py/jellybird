@@ -394,6 +394,7 @@ func (h *handlers) add(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.d.Engine.AddMagnet(r.Context(), body.Magnet, body.InfoHash, body.Provider, hint)
 	if err != nil {
+		h.d.Log.Warn("add magnet failed", "title", body.Title, "provider", body.Provider, "err", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}

@@ -108,7 +108,7 @@ func decode(resp *http.Response, out any) error {
 
 type user struct {
 	Username   string `json:"username"`
-	Premium    int    `json:"premium"` // 0/1
+	Premium    int    `json:"premium"` // seconds of premium remaining, 0 if none
 	Expiration string `json:"expiration"`
 }
 
@@ -119,7 +119,7 @@ func (c *Client) AccountInfo(ctx context.Context) (provider.Account, error) {
 		return provider.Account{}, err
 	}
 	acct := provider.Account{Username: u.Username}
-	if u.Premium == 1 && u.Expiration != "" {
+	if u.Premium > 0 && u.Expiration != "" {
 		if t, err := time.Parse(time.RFC3339, u.Expiration); err == nil {
 			acct.PremiumUntil = t
 		}
