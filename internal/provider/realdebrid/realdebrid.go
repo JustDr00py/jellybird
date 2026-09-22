@@ -288,28 +288,18 @@ func (c *Client) info(ctx context.Context, id string) (provider.Torrent, error) 
 	return pt, nil
 }
 
-type instantEntry struct {
-	// RD lists cached variants under the "rd" key; presence => instant.
-	RD []json.RawMessage `json:"rd"`
-}
-
-// InstantCheck implements provider.Provider.
+// InstantCheck implements provider.Provider. Real-Debrid permanently
+// disabled its instant-availability endpoint in late 2024 under
+// anti-piracy pressure (it now returns error_code 37 "disabled_endpoint"
+// for every call, undocumented in their current API reference), so there
+// is no way to ask RD which hashes are cached anymore. Returning no
+// results immediately avoids burning API quota on a call that is
+// guaranteed to fail for every hash, once per search; callers already
+// treat an empty result as "cached status unknown" and fall back
+// accordingly (SearchTorrents just won't mark RD candidates cached,
+// pickProvider skips to its next fallback).
 func (c *Client) InstantCheck(ctx context.Context, hashes []string) ([]provider.InstantResult, error) {
-	var out []provider.InstantResult
-	// RD's instantData endpoint takes one hash per call; probe failures must
-	// not sink the batch.
-	for _, h := range hashes {
-		var data map[string]instantEntry
-		if err := c.get(ctx, "/torrents/instantData/"+h, &data); err != nil {
-			continue
-		}
-		entry, ok := data[h]
-		out = append(out, provider.InstantResult{
-			Hash:   h,
-			Cached: ok && len(entry.RD) > 0,
-		})
-	}
-	return out, nil
+	return nil, nil
 }
 
 type unrestrict struct {

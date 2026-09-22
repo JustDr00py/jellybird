@@ -166,26 +166,19 @@ func TestAddMagnet(t *testing.T) {
 	}
 }
 
+// InstantCheck is a deliberate no-op: RD disabled its instant-availability
+// endpoint in late 2024, so calling it would just burn API quota on a
+// request guaranteed to fail for every hash.
 func TestInstantCheck(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/torrents/instantData/") {
-			t.Errorf("path = %s", r.URL.Path)
-		}
-		hash := strings.TrimPrefix(r.URL.Path, "/torrents/instantData/")
-		if hash == "aaaa" {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"aaaa": map[string]any{"rd": []any{[]any{"f1"}}},
-			})
-		} else {
-			_ = json.NewEncoder(w).Encode(map[string]any{})
-		}
+		t.Errorf("unexpected request to disabled RD endpoint: %s", r.URL.Path)
 	})
 	res, err := c.InstantCheck(context.Background(), []string{"aaaa", "bbbb"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res) != 2 || !res[0].Cached || res[1].Cached {
-		t.Errorf("res = %+v", res)
+	if len(res) != 0 {
+		t.Errorf("res = %+v, want empty", res)
 	}
 }
 
