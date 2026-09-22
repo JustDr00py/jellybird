@@ -36,6 +36,8 @@ services:
     restart: unless-stopped
     ports:
       - "8096:8096"
+    devices:
+      - /dev/dri:/dev/dri
     volumes:
       - jellyfin-config:/config
       - media:/media:ro
