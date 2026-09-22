@@ -16,6 +16,13 @@ import (
 	"jellybird/internal/store"
 )
 
+// extrasSizeRatio is the minimum fraction of a torrent's largest video file
+// size a file must reach to be treated as a main feature rather than a
+// bundled extra, for torrents without a hint. Bonus shorts/featurettes are
+// normally well under this relative to the real feature(s); legitimate
+// multi-movie box sets and season-pack episodes normally clear it.
+const extrasSizeRatio = 0.3
+
 // Writer manages the on-disk STRM tree and its database mapping.
 type Writer struct {
 	cfg   config.Library
@@ -105,12 +112,27 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 			hasHint = false
 		}
 		primaryFileID := ""
+		var maxVideoSize int64
 		if hasHint {
 			var bestSize int64 = -1
 			for _, f := range t.Files {
 				if w.isVideo(f.Path, f.SizeBytes) && f.SizeBytes > bestSize {
 					bestSize = f.SizeBytes
 					primaryFileID = f.ID
+				}
+			}
+		} else {
+			// No hint means this torrent wasn't added through jellybird's
+			// search flow (pre-existing cloud content, manual adds), so
+			// every video file would otherwise become its own library
+			// entry. Bonus shorts/featurettes/samples bundled alongside a
+			// real feature are typically a small fraction of its size, so
+			// filter those out relative to the biggest file in the torrent.
+			// Legitimate multi-movie/box-set files stay: they're normally
+			// within the same order of magnitude of each other.
+			for _, f := range t.Files {
+				if w.isVideo(f.Path, f.SizeBytes) && f.SizeBytes > maxVideoSize {
+					maxVideoSize = f.SizeBytes
 				}
 			}
 		}
@@ -120,6 +142,10 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 			}
 			if hasHint && f.ID != primaryFileID {
 				continue // extras/sample/junk bundled with a single-title add
+			}
+			if !hasHint && maxVideoSize > 0 && f.SizeBytes > 0 &&
+				float64(f.SizeBytes) < float64(maxVideoSize)*extrasSizeRatio {
+				continue // bonus short/sample bundled with the main feature(s)
 			}
 			key := t.ID + "/" + f.ID
 			seen[key] = true
@@ -137,8 +163,21 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 			} else {
 				// Prefer the torrent-level release name for parsing context.
 				parsed = Parse(f.Path)
-				if parsed.Kind == KindUnknown || parsed.Title == "" {
-					parsed = Parse(t.Name)
+				tParsed := Parse(t.Name)
+				switch {
+				case parsed.Kind == KindUnknown || parsed.Title == "":
+					parsed = tParsed
+					if parsed.Kind == KindTV && parsed.Episode == 0 {
+						parsed.Episode = EpisodeFromFileName(f.Path)
+					}
+				case parsed.Kind == KindMovie && tParsed.Kind == KindTV:
+					// The file itself carries no S/E marker of its own
+					// (season-pack torrents often just name members
+					// "01.mkv"), so it read as a bare-title movie. The
+					// torrent name says TV — trust that instead of filing
+					// every episode as its own "movie".
+					parsed = tParsed
+					parsed.Episode = EpisodeFromFileName(f.Path)
 				}
 			}
 

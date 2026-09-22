@@ -46,13 +46,35 @@ var (
 	// (e.g. "[SubsPlease] Show..."). It has no space before the "]", so the
 	// normal edge-trimming in cleanTitle can't remove it on its own.
 	leadingTagRe = regexp.MustCompile(`^\[[^\[\]]{1,40}\]\s*`)
+	// leadingIndexRe strips a zero-padded track/disc index some box-set and
+	// collection torrents prefix each file with ("01 - Title", "002 Title").
+	// Real movie/show titles never start with a leading zero, so this is
+	// safe to remove unconditionally.
+	leadingIndexRe = regexp.MustCompile(`^0\d{1,2}[\.\-\s]+`)
 	// yearRe finds a plausible (1930-2039) year token.
 	yearRe = regexp.MustCompile(`(?:^|[\.\_\s\-\[\(])((?:19[3-9]\d|20[0-3]\d))(?:$|[\.\_\s\-\]\)])`)
 	// trashRe strips release tags that pollute titles.
 	trashRe = regexp.MustCompile(`(?i)\b(?:480p|720p|1080[pi]|2160p|4k|uhd|web[\.\- ]?dl|web[\.\- ]?rip|web|br?rip|blu[\.\- ]?ray|bdrip|dvdrip|dvd|hdtv|hdts|cam|screener|x264|x265|h\.?264|h\.?265|hevc|avc|xvid|divx|aac2?\.?0|ac3|eac3|dts(\-hd)?|truehd|atmos|ddp?5?\.?1|10bit|8bit|hdr10(\+)?|dv|dolby[\.\- ]?vision|dolby[\.\- ]?atmos|repack|proper|real|extended|remastered|unrated|imax|multi|dubbed|subbed|internal|limited|remux|nordic|german|french|italian|spanish|dutch|complete|season|part\s?\d+)\b`)
 	// tokenRe splits release name into tokens.
 	tokenRe = regexp.MustCompile(`[\.\_ ]+`)
+	// bareEpisodeRe matches a standalone episode number in a filename that
+	// carries no S/E letter marker of its own (e.g. "01.mkv", "Episode
+	// 03.mkv", "3 - Title.mkv"). Only meaningful once the torrent-level
+	// name has already confirmed the release is TV, so it's used solely by
+	// EpisodeFromFileName.
+	bareEpisodeRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[\(])(?:e|ep|episode)?[\.\_\s]?(\d{1,3})(?:$|[\.\_\s\-\]\)])`)
 )
+
+// EpisodeFromFileName extracts a bare episode number from a season-pack
+// member file that carries no season/episode marker of its own (the torrent
+// name is what identified it as TV). Returns 0 when none is found.
+func EpisodeFromFileName(name string) int {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	if m := bareEpisodeRe.FindStringSubmatch(base); m != nil {
+		return atoi(m[1])
+	}
+	return 0
+}
 
 // Parse extracts title/season/episode/year from a release or file name.
 // The name may be a full path; only the base name (extension stripped) is used.
@@ -60,6 +82,7 @@ func Parse(name string) Parsed {
 	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 	base = strings.TrimSpace(base)
 	base = leadingTagRe.ReplaceAllString(base, "")
+	base = leadingIndexRe.ReplaceAllString(base, "")
 	p := Parsed{Kind: KindUnknown}
 
 	if base == "" {

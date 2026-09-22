@@ -59,10 +59,11 @@ func TestSyncProviderWritesStrm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// T1 has 2 video files but "sample.mkv" is 1KB → filtered by MinFileMB=0?
-	// MinFileMB disabled keeps it. Both count; T3 skipped (downloading).
-	if res.Created != 3 {
-		t.Fatalf("created = %d, want 3 (sample not filtered: min=0)", res.Created)
+	// T1 has 2 video files; "sample.mkv" is 1KB against an 8GB main file,
+	// so the no-hint extras size-ratio filter drops it regardless of
+	// MinFileMB. T3 skipped (downloading).
+	if res.Created != 2 {
+		t.Fatalf("created = %d, want 2 (sample filtered by size ratio)", res.Created)
 	}
 
 	// Check the actual files exist with the right URLs.
@@ -88,7 +89,7 @@ func TestSyncProviderWritesStrm(t *testing.T) {
 		t.Errorf("second sync created=%d removed=%d", res.Created, res.Removed)
 	}
 	files, _ := st.ListFiles(ctx, "")
-	if len(files) != 3 {
+	if len(files) != 2 {
 		t.Errorf("tracked files = %d", len(files))
 	}
 }
