@@ -95,6 +95,22 @@ func EpisodeFromFileName(name string) int {
 	return 0
 }
 
+// SeasonFromPath reports the season number from the file's immediate parent
+// directory when it's named "Season NN" (or "SNN"). Some torrents nest
+// absolute-numbered specials/movies under a season folder without repeating
+// the season anywhere in the filename or torrent name itself, leaving the
+// directory as the only machine-readable TV signal at all.
+func SeasonFromPath(path string) (season int, ok bool) {
+	dir := filepath.Base(filepath.Dir(path))
+	if dir == "." || dir == "/" || dir == "" {
+		return 0, false
+	}
+	if m := seasonPackRe.FindStringSubmatch(dir); m != nil {
+		return atoi(m[1]), true
+	}
+	return 0, false
+}
+
 // Parse extracts title/season/episode/year from a release or file name.
 // The name may be a full path; only the base name (extension stripped) is used.
 func Parse(name string) Parsed {

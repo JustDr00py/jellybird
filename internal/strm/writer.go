@@ -165,6 +165,15 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 				parsed = Parse(f.Path)
 				tParsed := Parse(t.Name)
 				switch {
+				case parsed.Kind == KindTV && parsed.Title == "" && tParsed.Title != "":
+					// The file's own season/episode marker sits at the very
+					// start of the name ("s01e08 Episode Title.mkv"), so
+					// there's no text left over for a title. The season and
+					// episode are already correct — just borrow the show
+					// name from the torrent instead of discarding them by
+					// falling through to the torrent-level parse wholesale.
+					parsed.Title = tParsed.Title
+					parsed.ShowTitle = tParsed.Title
 				case parsed.Kind == KindUnknown || parsed.Title == "":
 					parsed = tParsed
 					if parsed.Kind == KindTV && parsed.Episode == 0 {
@@ -178,6 +187,19 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 					// every episode as its own "movie".
 					parsed = tParsed
 					parsed.Episode = EpisodeFromFileName(f.Path)
+				case parsed.Kind == KindMovie && tParsed.Kind == KindMovie:
+					// Neither the file nor the torrent name carries any TV
+					// signal, but some torrents nest absolute-numbered
+					// specials/movies under a "Season NN" folder without
+					// repeating the season anywhere else — the last resort.
+					if season, ok := SeasonFromPath(f.Path); ok {
+						show := tParsed.Title
+						if show == "" {
+							show = parsed.Title
+						}
+						parsed = Parsed{Kind: KindTV, Title: show, ShowTitle: show, Season: season}
+						parsed.Episode = EpisodeFromFileName(f.Path)
+					}
 				}
 			}
 

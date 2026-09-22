@@ -94,6 +94,56 @@ func TestSyncProviderWritesStrm(t *testing.T) {
 	}
 }
 
+// Regression: a season-pack member whose own S/E marker sits at position 0
+// ("s01e08 Title.mkv") parses correctly as TV on its own but with an empty
+// title, since there's no text left before the marker. The rescue switch
+// used to discard that correct season/episode entirely and fall back to the
+// torrent-level parse, which is a bare-title Movie for an untitled torrent
+// name — filing every episode as its own "movie".
+func TestSyncBareEpisodeMarkerBorrowsTorrentTitle(t *testing.T) {
+	w, _, libPath := testWriter(t)
+	ctx := context.Background()
+
+	torrents := []provider.Torrent{
+		{
+			ID: "T1", Name: "Финес и Ферб", Status: provider.StatusReady,
+			Files: []provider.File{{ID: "1", Path: "Season 1/s01e08 Болван Дю Солей.mkv", SizeBytes: 500_000_000}},
+		},
+	}
+	if _, err := w.SyncProvider(ctx, provider.RealDebrid, torrents); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(libPath, "Shows", "Финес и Ферб", "Season 01", "Финес и Ферб S01E08.strm")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("rescued path missing: %s (%v)", want, err)
+	}
+}
+
+// Regression: neither the filename nor the torrent name carries any TV
+// signal ("Phineas and Ferb" torrent, "130 - ... The Movie - ....mp4" file),
+// but the file lives under a "Season NN" folder inside the torrent — the
+// only season signal that exists lives in the directory itself.
+func TestSyncSeasonFolderRescue(t *testing.T) {
+	w, _, libPath := testWriter(t)
+	ctx := context.Background()
+
+	torrents := []provider.Torrent{
+		{
+			ID: "T1", Name: "Phineas and Ferb", Status: provider.StatusReady,
+			Files: []provider.File{{ID: "2", Path: "Season 03/130 - Phineas and Ferb The Movie - Across the 2nd Dimension.mp4", SizeBytes: 500_000_000}},
+		},
+	}
+	if _, err := w.SyncProvider(ctx, provider.RealDebrid, torrents); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Join(libPath, "Shows", "Phineas and Ferb", "Season 03", "Phineas and Ferb S03E130.strm")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("rescued path missing: %s (%v)", want, err)
+	}
+}
+
 func TestSyncProviderPrunesDeleted(t *testing.T) {
 	w, _, libPath := testWriter(t)
 	ctx := context.Background()
