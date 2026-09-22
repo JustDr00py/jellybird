@@ -177,9 +177,9 @@ func (c *Client) ListCloud(ctx context.Context) ([]provider.Torrent, error) {
 			break
 		}
 	}
-	out := make([]provider.Torrent, 0, len(raw))
-	for _, t := range raw {
-		pt := provider.Torrent{
+	out := make([]provider.Torrent, len(raw))
+	for i, t := range raw {
+		out[i] = provider.Torrent{
 			ID:        t.ID,
 			Name:      t.Filename,
 			Hash:      strings.ToLower(t.Hash),
@@ -188,30 +188,51 @@ func (c *Client) ListCloud(ctx context.Context) ([]provider.Torrent, error) {
 		}
 		if t.Added != "" {
 			if secs, err := strconv.ParseInt(t.Added, 10, 64); err == nil {
-				pt.AddedAt = time.Unix(secs, 0).UTC()
+				out[i].AddedAt = time.Unix(secs, 0).UTC()
 			}
 		}
-		// The bulk list endpoint never carries per-file data (RD only
-		// returns "files" from /torrents/info/{id}); fetch it for torrents
-		// that are actually ready, since that's the only case the sync
-		// writer uses files for. Cached, since a ready torrent's files never
-		// change — without this, an account with 100+ ready torrents means
-		// 100+ rate-limited API calls on every single page load.
-		if pt.Status == provider.StatusReady {
-			c.fileMu.Lock()
-			cached, ok := c.fileCache[t.ID]
-			c.fileMu.Unlock()
-			if ok {
-				pt.Files = cached
-			} else if full, err := c.info(ctx, t.ID); err == nil {
-				pt.Files = full.Files
-				c.fileMu.Lock()
-				c.fileCache[t.ID] = full.Files
-				c.fileMu.Unlock()
-			}
-		}
-		out = append(out, pt)
 	}
+
+	// The bulk list endpoint never carries per-file data (RD only returns
+	// "files" from /torrents/info/{id}); fetch it for torrents that are
+	// actually ready, since that's the only case the sync writer uses files
+	// for. Cached, since a ready torrent's files never change — without
+	// this, an account with 100+ ready torrents means 100+ rate-limited API
+	// calls on every single page load. The cache is empty right after
+	// startup, so fetches for uncached torrents run concurrently (bounded,
+	// and still throttled overall by the shared rate limiter) instead of one
+	// full network round-trip at a time — otherwise a large library's first
+	// load after a restart can take tens of seconds.
+	const fileFetchConcurrency = 20
+	sem := make(chan struct{}, fileFetchConcurrency)
+	var wg sync.WaitGroup
+	for i, t := range raw {
+		if mapStatus(t.Status) != provider.StatusReady {
+			continue
+		}
+		c.fileMu.Lock()
+		cached, ok := c.fileCache[t.ID]
+		c.fileMu.Unlock()
+		if ok {
+			out[i].Files = cached
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, id string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			full, err := c.info(ctx, id)
+			if err != nil {
+				return
+			}
+			c.fileMu.Lock()
+			c.fileCache[id] = full.Files
+			c.fileMu.Unlock()
+			out[i].Files = full.Files
+		}(i, t.ID)
+	}
+	wg.Wait()
 	return out, nil
 }
 
