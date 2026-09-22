@@ -133,11 +133,14 @@ func (h *handlers) cloud(w http.ResponseWriter, r *http.Request) {
 		err      error
 	}
 	results := make(chan result, len(providers))
-	for name, p := range providers {
-		go func(name provider.Name, p provider.Provider) {
-			torrents, err := p.ListCloud(r.Context())
+	for name := range providers {
+		go func(name provider.Name) {
+			// Engine.ListCloud serves a short-lived cache shared with the
+			// background sync, so reloading this page doesn't re-hit the
+			// provider API every time.
+			torrents, err := h.d.Engine.ListCloud(r.Context(), name)
 			results <- result{name, torrents, err}
-		}(name, p)
+		}(name)
 	}
 
 	out := []map[string]any{}

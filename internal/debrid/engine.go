@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"jellybird/internal/config"
@@ -17,6 +18,20 @@ import (
 	"jellybird/internal/store"
 	"jellybird/internal/strm"
 )
+
+// cloudCacheTTL bounds how often the periodic sync loop and the /api/cloud
+// page each hit a provider's cloud-listing API. Both share one cache entry
+// per provider, so back-to-back page loads (or a page load landing right
+// after a sync tick) reuse the same fetch instead of doubling API traffic.
+const cloudCacheTTL = 30 * time.Second
+
+// cloudCacheEntry holds one provider's most recent cloud listing. Failed
+// fetches are never cached, so a transient provider error always retries on
+// the next call instead of being pinned for the TTL.
+type cloudCacheEntry struct {
+	torrents  []provider.Torrent
+	fetchedAt time.Time
+}
 
 // Engine coordinates all providers.
 type Engine struct {
@@ -28,11 +43,20 @@ type Engine struct {
 	indexer   *torrentio.Client
 	lastSync  time.Time
 	lastErr   error
+
+	cloudMu    sync.Mutex
+	cloudCache map[provider.Name]cloudCacheEntry
 }
 
 // NewEngine builds the engine.
 func NewEngine(providers map[provider.Name]provider.Provider, writer *strm.Writer, st *store.Store, log *slog.Logger) *Engine {
-	return &Engine{providers: providers, writer: writer, store: st, log: log}
+	return &Engine{
+		providers:  providers,
+		writer:     writer,
+		store:      st,
+		log:        log,
+		cloudCache: make(map[provider.Name]cloudCacheEntry),
+	}
 }
 
 // EnableSearch wires the search pipeline (TMDB + Torrentio).
@@ -50,11 +74,49 @@ func (e *Engine) SearchEnabled() bool { return e.meta != nil && e.indexer != nil
 // Providers exposes the enabled provider map.
 func (e *Engine) Providers() map[provider.Name]provider.Provider { return e.providers }
 
+// ListCloud returns one provider's cloud listing, serving a cached copy when
+// it's fresh enough. Used by both the periodic sync and the /api/cloud page
+// so neither pays for a separate round trip when the other just fetched.
+func (e *Engine) ListCloud(ctx context.Context, name provider.Name) ([]provider.Torrent, error) {
+	p, ok := e.providers[name]
+	if !ok {
+		return nil, fmt.Errorf("provider %q not enabled", name)
+	}
+	return e.listCloud(ctx, name, p)
+}
+
+func (e *Engine) listCloud(ctx context.Context, name provider.Name, p provider.Provider) ([]provider.Torrent, error) {
+	e.cloudMu.Lock()
+	entry, ok := e.cloudCache[name]
+	e.cloudMu.Unlock()
+	if ok && time.Since(entry.fetchedAt) < cloudCacheTTL {
+		return entry.torrents, nil
+	}
+	torrents, err := p.ListCloud(ctx)
+	if err != nil {
+		return nil, err
+	}
+	e.cloudMu.Lock()
+	e.cloudCache[name] = cloudCacheEntry{torrents: torrents, fetchedAt: time.Now()}
+	e.cloudMu.Unlock()
+	return torrents, nil
+}
+
+// invalidateCloudCache drops a provider's cached listing so the next read
+// (sync or cloud page) fetches fresh data instead of waiting out the TTL —
+// used right after an action that changes cloud state (add/delete) so it's
+// reflected immediately.
+func (e *Engine) invalidateCloudCache(name provider.Name) {
+	e.cloudMu.Lock()
+	delete(e.cloudCache, name)
+	e.cloudMu.Unlock()
+}
+
 // SyncNow runs one cloud sync across all providers.
 func (e *Engine) SyncNow(ctx context.Context) (strm.SyncResult, error) {
 	total := strm.SyncResult{}
 	for name, p := range e.providers {
-		torrents, err := p.ListCloud(ctx)
+		torrents, err := e.listCloud(ctx, name, p)
 		if err != nil {
 			e.log.Error("list cloud failed", "provider", name, "err", err)
 			e.lastErr = err
@@ -218,6 +280,7 @@ func (e *Engine) AddMagnet(ctx context.Context, magnet, infoHash, preferred stri
 		return AddResult{}, fmt.Errorf("add to %s: %w", target.name, err)
 	}
 	res := AddResult{Provider: string(target.name), TorrentID: id, Cached: cached}
+	e.invalidateCloudCache(target.name)
 	if hint != nil {
 		hint.Provider = string(target.name)
 		hint.TorrentID = id
@@ -244,6 +307,7 @@ func (e *Engine) RemoveTorrent(ctx context.Context, name provider.Name, torrentI
 	if err := p.Delete(ctx, torrentID); err != nil {
 		return err
 	}
+	e.invalidateCloudCache(name)
 	if err := e.writer.RemoveTorrent(ctx, name, torrentID); err != nil {
 		e.log.Warn("strm cleanup after delete failed", "provider", name, "torrent", torrentID, "err", err)
 	}
