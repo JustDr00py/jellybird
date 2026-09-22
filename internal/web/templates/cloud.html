@@ -1,0 +1,143 @@
+{{template "head" .}}
+<div class="card">
+  <h2 style="margin-top:0">Debrid cloud</h2>
+  <p class="muted">Live view of torrents in your Real-Debrid / TorBox accounts. Ready torrents are synced into STRM automatically.</p>
+  <div class="row" style="margin-bottom:.8rem">
+    <input type="search" id="fname" placeholder="Search name…" style="flex:1">
+    <select id="fprovider">
+      <option value="">All providers</option>
+      <option value="realdebrid">Real-Debrid</option>
+      <option value="torbox">TorBox</option>
+    </select>
+    <select id="fstatus">
+      <option value="">All statuses</option>
+      <option value="ready">Ready</option>
+      <option value="downloading">Downloading</option>
+      <option value="seeding">Seeding</option>
+      <option value="error">Error</option>
+      <option value="unknown">Unknown</option>
+    </select>
+    <input type="number" id="fminfiles" placeholder="Min files" style="flex:0 0 7rem" min="0">
+  </div>
+  <table id="cloudtbl">
+    <thead><tr><th>Name</th><th>Provider</th><th>Status</th><th>Files</th><th>Size</th><th></th></tr></thead>
+    <tbody><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+  </table>
+  <div class="row" style="justify-content:center; margin-top:.6rem">
+    <button class="ghost" id="cloudprev">‹ Prev</button>
+    <span class="muted" id="cloudpageinfo"></span>
+    <button class="ghost" id="cloudnext">Next ›</button>
+  </div>
+  <div class="row" style="margin-top:1rem">
+    <input type="text" id="magnet" placeholder="Paste a magnet link to add directly…" style="flex:1">
+    <button id="addmagnet">Add magnet</button>
+  </div>
+  <div class="row" style="margin-top:.5rem">
+    <span class="muted">Optional — normalize the name instead of using the raw release filename:</span>
+  </div>
+  <div class="row" style="margin-top:.4rem">
+    <input type="text" id="ntitle" placeholder="Title (e.g. Harry Potter and the Sorcerer's Stone)" style="flex:2">
+    <input type="number" id="nyear" placeholder="Year" style="flex:0 0 6rem">
+    <select id="ntype" style="flex:0 0 8rem">
+      <option value="movie">Movie</option>
+      <option value="tv">TV show</option>
+    </select>
+    <input type="number" id="nseason" placeholder="Season" style="flex:0 0 6rem">
+    <input type="number" id="nepisode" placeholder="Episode" style="flex:0 0 6rem">
+  </div>
+  <div class="err" id="err"></div>
+</div>
+<script>
+let token = new URLSearchParams(location.search).get("token") || "";
+function q() { return token ? `?token=${token}` : ""; }
+const statusPill = s => s === "ready" ? pill(s,"ok") : s === "error" ? pill(s,"err") : pill(s,"warn");
+
+const PAGE_SIZE = 150;
+let cloudData = [];
+let cloudPage = 0;
+
+function filteredData() {
+  const name = $("#fname").value.trim().toLowerCase();
+  const provider = $("#fprovider").value;
+  const status = $("#fstatus").value;
+  const minFiles = $("#fminfiles").value ? +$("#fminfiles").value : null;
+  return cloudData.filter(t =>
+    (!name || t.name.toLowerCase().includes(name)) &&
+    (!provider || t.provider === provider) &&
+    (!status || t.status === status) &&
+    (minFiles === null || t.files >= minFiles));
+}
+
+function renderPage() {
+  const tbody = $("#cloudtbl tbody");
+  const filtered = filteredData();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  cloudPage = Math.min(cloudPage, totalPages - 1);
+  const slice = filtered.slice(cloudPage * PAGE_SIZE, (cloudPage + 1) * PAGE_SIZE);
+  tbody.innerHTML = slice.length ? slice.map(t => `
+    <tr><td>${t.name}</td><td>${pill(t.provider,"blue")}</td>
+    <td>${statusPill(t.status)}</td><td class="muted">${t.files}</td>
+    <td class="muted">${fmtSize(t.size)}</td>
+    <td><button class="ghost removebtn" data-provider="${t.provider}" data-id="${t.id}">Remove</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="muted">No matches.</td></tr>`;
+  $("#cloudpageinfo").textContent = `Page ${cloudPage + 1} of ${totalPages} (${filtered.length} of ${cloudData.length} total)`;
+  $("#cloudprev").disabled = cloudPage === 0;
+  $("#cloudnext").disabled = cloudPage >= totalPages - 1;
+  $$("#cloudtbl button.removebtn").forEach(btn => {
+    btn.onclick = async () => {
+      if (!confirm("Remove this from your debrid cloud? This deletes it there and removes its STRM file.")) return;
+      btn.disabled = true; btn.textContent = "…";
+      try {
+        const extra = `provider=${btn.dataset.provider}&id=${encodeURIComponent(btn.dataset.id)}`;
+        await api("/api/cloud" + (token ? `?token=${token}&${extra}` : `?${extra}`), {method:"DELETE"});
+        load();
+      } catch (e) { $("#err").textContent = e.message; btn.disabled = false; btn.textContent = "Remove"; }
+    };
+  });
+}
+
+let loading = false;
+async function load() {
+  if (loading) return; // skip: previous fetch still in flight (slow cold cache, etc.)
+  loading = true;
+  try {
+    cloudData = await api("/api/cloud"+q());
+    renderPage();
+  } catch (e) { $("#cloudtbl tbody").innerHTML = `<tr><td colspan="6" class="err">${e.message}</td></tr>`; }
+  loading = false;
+}
+load(); setInterval(load, 15000);
+
+$("#cloudprev").onclick = () => { cloudPage--; renderPage(); };
+$("#cloudnext").onclick = () => { cloudPage++; renderPage(); };
+
+$$("#fname, #fprovider, #fstatus, #fminfiles").forEach(el => {
+  el.addEventListener("input", () => { cloudPage = 0; renderPage(); });
+});
+
+$("#addmagnet").onclick = async () => {
+  const magnet = $("#magnet").value.trim();
+  if (!magnet.startsWith("magnet:")) { $("#err").textContent = "That does not look like a magnet link."; return; }
+  const title = $("#ntitle").value.trim();
+  const body = {magnet};
+  if (title) {
+    body.title = title;
+    body.media_type = $("#ntype").value;
+    body.year = $("#nyear").value ? +$("#nyear").value : 0;
+    if (body.media_type === "tv") {
+      body.season = $("#nseason").value ? +$("#nseason").value : 1;
+      body.episode = $("#nepisode").value ? +$("#nepisode").value : 1;
+    }
+  }
+  $("#err").textContent = ""; $("#addmagnet").disabled = true;
+  try {
+    const res = await api("/api/add"+q(), {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)});
+    $("#magnet").value = ""; $("#ntitle").value = ""; $("#nyear").value = ""; $("#nseason").value = ""; $("#nepisode").value = "";
+    $("#err").textContent = res.cached ? "Added and cached — STRM written." : "Added — it will appear after the download completes.";
+    load();
+  } catch (e) { $("#err").textContent = e.message; }
+  $("#addmagnet").disabled = false;
+};
+</script>
+{{template "foot" .}}

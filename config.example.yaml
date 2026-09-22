@@ -1,0 +1,81 @@
+# jellybird config — see README.md for the full walkthrough.
+# Every value can also be set via environment variables (listed per section).
+
+server:
+  # Gateway listen address. STRM files will point here.
+  address: ":8097"
+  # Base URL written into .strm files. Set this explicitly when your media
+  # server runs in Docker or on another host, e.g. "http://jellybird:8097"
+  # or "http://192.168.1.50:8097". Empty uses http://127.0.0.1:<address>.
+  external_url: ""
+  # Shared secret protecting /stream, /api and the dashboard.
+  # Media servers send it via the query string embedded in the .strm files.
+  # env: JELLYBIRD_SERVER_TOKEN
+  token: ""
+
+providers:
+  realdebrid:
+    # API token from https://real-debrid.com/apitoken
+    # env: JELLYBIRD_REALDEBRID_API_KEY
+    api_key: ""
+    # Stay under the documented 250 req/min limit; tune down if you share
+    # the token with other tools.
+    requests_per_minute: 240
+  torbox:
+    # API key from TorBox → Settings → API
+    # env: JELLYBIRD_TORBOX_API_KEY
+    api_key: ""
+    requests_per_minute: 280
+
+library:
+  # Root of the media tree jellybird manages. Point Jellyfin/Emby/Silo
+  # libraries at <path>/Movies and <path>/Shows.
+  # env: JELLYBIRD_LIBRARY_PATH
+  path: /media
+  movies_dir: "Movies"
+  tv_dir: "Shows"
+  # false: parse release names into "Movies/Title (Year)" and
+  #        "Shows/Title/Season NN" layouts (recommended).
+  # true:  mirror the torrent's own folder/file structure.
+  preserve_structure: false
+
+sync:
+  # How often to poll the debrid clouds (min 30s).
+  interval: 10m
+  # Sync immediately at startup.
+  run_on_start: true
+  # File extensions that become .strm entries.
+  video_extensions: [".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg", ".ts"]
+  # Skip video files smaller than this (drops "sample.mkv" extras). 0 = off.
+  min_file_mb: 50
+  # Skip video files larger than this. 0 = unlimited.
+  max_file_mb: 0
+
+tmdb:
+  # Free TMDB v3 API key — powers the search UI. https://www.themoviedb.org/settings/api
+  # env: JELLYBIRD_TMDB_API_KEY
+  api_key: ""
+  language: "en-US"
+
+indexers:
+  torrentio:
+    enabled: true
+    # base_url: ""   # use the public https://torrentio.strem.fun by default
+
+watchlist:
+  # Jellyseerr integration: approved requests are auto-searched, added to
+  # your debrid and appear as STRM. Requires tmdb.api_key.
+  # env: JELLYBIRD_JELLYSEERR_URL / JELLYBIRD_JELLYSEERR_API_KEY
+  jellyseerr_url: ""
+  api_key: ""
+  interval: 2m
+  # Flip the Jellyseerr media item to "Available" once added.
+  mark_available: true
+
+database:
+  # SQLite location (state, link cache, request tracking).
+  # env: JELLYBIRD_DATABASE_PATH
+  path: "data/jellybird.db"
+
+# debug | info | warn | error   (env: JELLYBIRD_LOG_LEVEL)
+log_level: "info"

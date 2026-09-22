@@ -1,0 +1,57 @@
+# jellybird + Jellyfin example stack.
+#
+# Setup:
+#   1. `cp .env.example .env`  and paste your API keys into .env
+#   2. `cp config.example.yaml config.yaml` (already shipped: tweak if needed)
+#   3. `docker compose up -d`
+
+services:
+  jellybird:
+    build: .
+    # image: ghcr.io/yourname/jellybird:latest   # once published
+    container_name: jellybird
+    restart: unless-stopped
+    ports:
+      - "8097:8097"
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+      - media:/media
+      - data:/data
+    environment:
+      # The URL Jellyfin will use to reach jellybird (compose service name).
+      JELLYBIRD_SERVER_EXTERNAL_URL: "http://jellybird:8097"
+      # `${VAR:-}` defaults to empty and stays quiet when an integration is
+      # off. jellybird needs at least ONE provider key; if neither is set the
+      # container exits with a clear message — check `docker logs jellybird`.
+      JELLYBIRD_REALDEBRID_API_KEY: "${JELLYBIRD_REALDEBRID_API_KEY:-}"
+      JELLYBIRD_TORBOX_API_KEY: "${JELLYBIRD_TORBOX_API_KEY:-}"
+      JELLYBIRD_TMDB_API_KEY: "${JELLYBIRD_TMDB_API_KEY:-}"
+      JELLYBIRD_JELLYSEERR_URL: "${JELLYBIRD_JELLYSEERR_URL:-}"
+      JELLYBIRD_JELLYSEERR_API_KEY: "${JELLYBIRD_JELLYSEERR_API_KEY:-}"
+      JELLYBIRD_SERVER_TOKEN: "${JELLYBIRD_SERVER_TOKEN:-}"
+
+  jellyfin:
+    image: jellyfin/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - jellyfin-config:/config
+      - media:/media:ro
+    # Jellyfin reaches jellybird over the compose network using the
+    # external_url above; no extra config needed.
+
+  # Optional: Silo instead of (or next to) Jellyfin.
+  # silo:
+  #   image: ghcr.io/silo-server/silo:latest
+  #   ports: ["8090:8090"]
+  #   volumes:
+  #     - silo-config:/config
+  #     - media:/media:ro
+
+volumes:
+  media:
+  data:
+  jellyfin-config:
+  # silo-config:

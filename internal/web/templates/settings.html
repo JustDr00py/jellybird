@@ -1,0 +1,52 @@
+{{template "head" .}}
+<div class="card">
+  <h2 style="margin-top:0">Accounts</h2>
+  <table id="accts">
+    <thead><tr><th>Provider</th><th>User</th><th>Premium</th><th>State</th></tr></thead>
+    <tbody><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+  </table>
+</div>
+<div class="card">
+  <h2 style="margin-top:0">Configuration</h2>
+  <table>
+    <tr><th>Library path</th><td><code>{{.Config.Library.Path}}</code></td></tr>
+    <tr><th>Sync interval</th><td>{{.Config.Sync.Interval}}</td></tr>
+    <tr><th>Gateway address</th><td><code>{{.Config.Server.Address}}</code></td></tr>
+    <tr><th>External URL</th><td><code>{{or .Config.Server.ExternalURL "(request host)"}}</code></td></tr>
+    <tr><th>Auth token</th><td>{{if .Config.Server.Token}}enabled{{else}}disabled{{end}}</td></tr>
+    <tr><th>Search</th><td>{{if .Config.HasSearch}}enabled (TMDB + Torrentio){{else}}disabled — set tmdb.api_key{{end}}</td></tr>
+    <tr><th>Watchlist</th><td>{{if .Config.HasWatchlist}}Jellyseerr at {{.Config.Watchlist.JellyseerrURL}}{{else}}disabled{{end}}</td></tr>
+    <tr><th>Version</th><td>{{.Version}}</td></tr>
+  </table>
+</div>
+<div class="card">
+  <h2 style="margin-top:0">Watchlist requests</h2>
+  <table id="reqs">
+    <thead><tr><th>Source</th><th>Media</th><th>Status</th><th>Detail</th><th>Updated</th></tr></thead>
+    <tbody><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+  </table>
+</div>
+<script>
+let token = new URLSearchParams(location.search).get("token") || "";
+function q() { return token ? `?token=${token}` : ""; }
+
+(async () => {
+  try {
+    const a = await api("/api/accounts"+q());
+    $("#accts tbody").innerHTML = a.accounts.map(x => `
+      <tr><td>${pill(x.provider,"blue")}</td><td>${x.username||"—"}</td>
+      <td>${x.premium ? pill("until "+(x.premium_until||"").slice(0,10),"ok") : x.error ? "—" : pill("no","warn")}</td>
+      <td>${x.error ? `<span class="err">${x.error}</span>` : pill("ok","ok")}</td></tr>`).join("");
+    $("#syncinfo").textContent = "last sync: " + (a.last_sync||"never");
+  } catch (e) { $("#accts tbody").innerHTML = `<tr><td colspan="4" class="err">${e.message}</td></tr>`; }
+  try {
+    const reqs = await api("/api/requests"+q());
+    $("#reqs tbody").innerHTML = reqs.length ? reqs.map(r => `
+      <tr><td>${r.Source}</td><td>${r.Title}${r.Season? " S"+r.Season : ""}${r.Episode? "E"+r.Episode : ""}</td>
+      <td>${pill(r.Status, r.Status==="failed"?"err":r.Status==="added"?"ok":"warn")}</td>
+      <td class="muted">${r.Detail}</td><td class="muted">${r.UpdatedAt}</td></tr>`).join("")
+      : `<tr><td colspan="5" class="muted">No tracked requests.</td></tr>`;
+  } catch (e) { $("#reqs tbody").innerHTML = `<tr><td colspan="5" class="muted">${e.message}</td></tr>`; }
+})();
+</script>
+{{template "foot" .}}

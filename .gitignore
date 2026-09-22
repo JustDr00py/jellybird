@@ -1,0 +1,19 @@
+# binaries
+/jellybird
+/dist/
+
+# runtime state
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# local config (contains API keys)
+/config.yaml
+/.env
+
+# generated strm trees used for local testing
+/media/
+
+# Claude Code planning artifacts
+/.zcode/

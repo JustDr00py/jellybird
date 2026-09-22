@@ -1,0 +1,118 @@
+{{template "head" .}}
+<div class="card row">
+  <button id="syncbtn">Sync now</button>
+  <button class="ghost" id="wipebtn">Wipe library</button>
+  <span class="muted" id="syncmsg"></span>
+</div>
+<div class="card">
+  <h2 style="margin-top:0">Library ({{.Total}} files)</h2>
+  <form class="row" method="get" style="margin-bottom:1rem">
+    <input type="search" name="q" value="{{.Query}}" placeholder="Search title or file name…" style="flex:1">
+    <select name="provider">
+      <option value="" {{if eq .Provider ""}}selected{{end}}>All providers</option>
+      <option value="realdebrid" {{if eq .Provider "realdebrid"}}selected{{end}}>Real-Debrid</option>
+      <option value="torbox" {{if eq .Provider "torbox"}}selected{{end}}>TorBox</option>
+    </select>
+    <button type="submit">Filter</button>
+    {{if or .Query .Provider}}<a href="/"><button type="button" class="ghost">Clear</button></a>{{end}}
+  </form>
+  <table>
+    <thead><tr><th>Title</th><th>File</th><th>Provider</th><th>Size</th><th>STRM</th><th></th></tr></thead>
+    <tbody>
+    {{range .Files}}
+      <tr>
+        <td class="trunc" title="{{.TorrentName}}">{{.TorrentName}}</td>
+        <td class="muted trunc" title="{{.FilePath}}">{{.FilePath}}</td>
+        <td>{{pill .Provider "blue"}}</td>
+        <td class="muted">{{fmtSize .SizeBytes}}</td>
+        <td class="trunc"><code title="{{.StrmPath}}">{{base .StrmPath}}</code></td>
+        <td><button class="ghost editbtn" data-provider="{{.Provider}}" data-torrent-id="{{.TorrentID}}" data-name="{{.TorrentName}}">Edit</button></td>
+      </tr>
+    {{else}}
+      <tr><td colspan="6" class="muted">No STRM files yet — add content in Search &amp; Add or wait for the next sync.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <div class="row" style="justify-content:center; margin-top:1rem">
+    {{if .HasPrev}}<a href="?page={{.PrevPage}}&q={{.Query}}&provider={{.Provider}}"><button class="ghost">‹ Prev</button></a>{{end}}
+    <span class="muted">Page {{.Page}} of {{.TotalPages}}</span>
+    {{if .HasNext}}<a href="?page={{.NextPage}}&q={{.Query}}&provider={{.Provider}}"><button class="ghost">Next ›</button></a>{{end}}
+  </div>
+</div>
+
+<dialog id="renamedlg">
+  <div class="row" style="justify-content:space-between; margin-bottom:.6rem">
+    <strong>Rename</strong>
+    <button class="ghost" onclick="renamedlg.close()">✕</button>
+  </div>
+  <p class="muted" id="renamesrc" style="margin-top:0"></p>
+  <div class="row" style="margin-bottom:.5rem">
+    <input type="text" id="rtitle" placeholder="Title" style="flex:2">
+    <input type="number" id="ryear" placeholder="Year" style="flex:0 0 6rem">
+  </div>
+  <div class="row" style="margin-bottom:.8rem">
+    <select id="rtype" style="flex:0 0 8rem">
+      <option value="movie">Movie</option>
+      <option value="tv">TV show</option>
+    </select>
+    <input type="number" id="rseason" placeholder="Season" style="flex:0 0 6rem">
+    <input type="number" id="repisode" placeholder="Episode" style="flex:0 0 6rem">
+  </div>
+  <div class="row" style="justify-content:space-between">
+    <span class="err" id="renameerr"></span>
+    <button id="renamesave">Save &amp; resync</button>
+  </div>
+</dialog>
+
+<script>
+let renameCtx = null;
+$$(".editbtn").forEach(btn => {
+  btn.onclick = () => {
+    renameCtx = {provider: btn.dataset.provider, torrentId: btn.dataset.torrentId};
+    $("#renamesrc").textContent = "Currently: " + btn.dataset.name;
+    $("#rtitle").value = ""; $("#ryear").value = "";
+    $("#rtype").value = "movie"; $("#rseason").value = ""; $("#repisode").value = "";
+    $("#renameerr").textContent = "";
+    renamedlg.showModal();
+  };
+});
+
+$("#renamesave").onclick = async () => {
+  const title = $("#rtitle").value.trim();
+  if (!title) { $("#renameerr").textContent = "Title is required."; return; }
+  const mediaType = $("#rtype").value;
+  $("#renamesave").disabled = true;
+  try {
+    await api("/api/library/rename", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+      provider: renameCtx.provider, torrent_id: renameCtx.torrentId,
+      title, media_type: mediaType,
+      year: $("#ryear").value ? +$("#ryear").value : 0,
+      season: mediaType === "tv" ? (+$("#rseason").value || 1) : 0,
+      episode: mediaType === "tv" ? (+$("#repisode").value || 1) : 0,
+    })});
+    renamedlg.close();
+    location.reload();
+  } catch (e) { $("#renameerr").textContent = e.message; }
+  $("#renamesave").disabled = false;
+};
+</script>
+
+<script>
+$("#syncbtn").onclick = async () => {
+  $("#syncbtn").disabled = true; $("#syncmsg").textContent = "syncing…";
+  try { await api("/api/sync", {method:"POST"}); $("#syncmsg").textContent = "sync started, page reloads shortly…";
+        setTimeout(()=>location.reload(), 4000);
+  } catch (e) { $("#syncmsg").textContent = e.message; $("#syncbtn").disabled = false; }
+};
+
+$("#wipebtn").onclick = async () => {
+  if (!confirm("Delete every .strm file and library record, then resync from scratch? This does NOT touch your Real-Debrid/TorBox cloud — only jellybird's local tracking.")) return;
+  $("#wipebtn").disabled = true; $("#syncmsg").textContent = "wiping…";
+  try {
+    const res = await api("/api/library/wipe", {method:"POST"});
+    $("#syncmsg").textContent = `removed ${res.removed} files, resyncing — reloading…`;
+    setTimeout(()=>location.reload(), 2000);
+  } catch (e) { $("#syncmsg").textContent = e.message; $("#wipebtn").disabled = false; }
+};
+</script>
+{{template "foot" .}}

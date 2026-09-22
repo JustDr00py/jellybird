@@ -1,0 +1,95 @@
+{{define "head"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jellybird</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+         background:#0f1115; color:#e2e6ee; }
+  header { display:flex; align-items:center; gap:1rem; padding:.8rem 1.2rem;
+           background:#151923; border-bottom:1px solid #262c3a; }
+  header h1 { margin:0; font-size:1.1rem; color:#8fb4ff; }
+  nav a { color:#9aa3b5; text-decoration:none; margin-right:1rem; font-size:.95rem; }
+  nav a.active, nav a:hover { color:#8fb4ff; }
+  main { max-width:1100px; margin:0 auto; padding:1.2rem; }
+  .card { background:#151923; border:1px solid #262c3a; border-radius:10px;
+          padding:1rem 1.2rem; margin-bottom:1rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:1rem; }
+  input, select, button { font:inherit; }
+  input[type=text], input[type=search] { background:#0f1115; color:#e2e6ee;
+      border:1px solid #2c3446; border-radius:8px; padding:.55rem .8rem; width:100%; }
+  button { background:#2b5fd9; color:#fff; border:0; border-radius:8px;
+           padding:.55rem 1.1rem; cursor:pointer; }
+  button.ghost { background:#232a3a; }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; font-size:.92rem; }
+  th, td { text-align:left; padding:.45rem .6rem; border-bottom:1px solid #232838; }
+  th { color:#9aa3b5; font-weight:600; }
+  @media (max-width: 640px) {
+    main { padding:.8rem; }
+    table { display:block; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
+  }
+  .pill { display:inline-block; padding:.1rem .55rem; border-radius:99px; font-size:.75rem; }
+  .pill.ok { background:#12351f; color:#6fe08f; }
+  .pill.warn { background:#3a2d10; color:#ffc861; }
+  .pill.err { background:#3a1616; color:#ff7a7a; }
+  .pill.blue { background:#14243d; color:#8fb4ff; }
+  .muted { color:#9aa3b5; }
+  .trunc { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+  .err { color:#ff7a7a; min-height:1.2rem; }
+  .media { background:#151923; border:1px solid #262c3a; border-radius:10px;
+           padding:.8rem; cursor:pointer; }
+  .media:hover { border-color:#2b5fd9; }
+  .media img { width:100%; border-radius:6px; aspect-ratio:2/3; object-fit:cover; background:#0f1115; }
+  .media .t { font-size:.9rem; margin-top:.4rem; }
+  dialog { background:#151923; color:#e2e6ee; border:1px solid #262c3a;
+           border-radius:12px; max-width:900px; width:92vw;
+           max-height:85vh; overflow-y:auto; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  @media (max-width: 640px) {
+    dialog { width:96vw; max-height:90vh; padding:.8rem; }
+  }
+  .streambtn { background:#12351f; }
+  code { background:#0f1115; padding:.1rem .35rem; border-radius:5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐦 jellybird</h1>
+  <nav>
+    <a href="/" data-page="home">Library</a>
+    <a href="/search" data-page="search">Search &amp; Add</a>
+    <a href="/cloud" data-page="cloud">Cloud</a>
+    <a href="/settings" data-page="settings">Settings</a>
+  </nav>
+  <span class="muted" style="margin-left:auto" id="syncinfo"></span>
+</header>
+<main>
+<script>
+const $ = (s, el=document) => el.querySelector(s);
+const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).error || r.statusText);
+  return r.json();
+}
+function pill(text, cls) { return `<span class="pill ${cls}">${text}</span>`; }
+function fmtSize(n) {
+  if (!n) return "—";
+  const u = ["B","KB","MB","GB","TB"]; let i = 0;
+  while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
+  return n.toFixed(i > 1 ? 1 : 0) + " " + u[i];
+}
+</script>
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}

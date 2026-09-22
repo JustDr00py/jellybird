@@ -1,0 +1,380 @@
+package strm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"jellybird/internal/config"
+	"jellybird/internal/provider"
+	"jellybird/internal/store"
+)
+
+// Writer manages the on-disk STRM tree and its database mapping.
+type Writer struct {
+	cfg   config.Library
+	sync  config.Sync
+	store *store.Store
+	log   *slog.Logger
+	// externalBase is the gateway base URL written into .strm files.
+	externalBase string
+	// token is appended as a query parameter when set.
+	token string
+}
+
+// NewWriter builds a Writer.
+func NewWriter(cfg config.Config, st *store.Store, log *slog.Logger, externalBase, token string) *Writer {
+	return &Writer{
+		cfg:          cfg.Library,
+		sync:         cfg.Sync,
+		store:        st,
+		log:          log,
+		externalBase: strings.TrimSuffix(externalBase, "/"),
+		token:        token,
+	}
+}
+
+// StreamURL returns the gateway URL for a cloud file.
+func (w *Writer) StreamURL(p provider.Name, torrentID, fileID string) string {
+	u := fmt.Sprintf("%s/stream/%s/%s/%s", w.externalBase, p, torrentID, fileID)
+	if w.token != "" {
+		u += "?token=" + w.token
+	}
+	return u
+}
+
+// isVideo reports whether a file should become a STRM entry.
+func (w *Writer) isVideo(path string, size int64) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	allowed := false
+	for _, okExt := range w.sync.VideoExtensions {
+		if ext == okExt {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return false
+	}
+	if w.sync.MinFileMB > 0 && size > 0 && size < w.sync.MinFileMB*1024*1024 {
+		return false
+	}
+	if w.sync.MaxFileMB > 0 && size > 0 && size > w.sync.MaxFileMB*1024*1024 {
+		return false
+	}
+	return true
+}
+
+// SyncResult summarizes one sync pass.
+type SyncResult struct {
+	Created int
+	Updated int
+	Removed int
+}
+
+// SyncProvider writes STRM files for one provider's cloud snapshot and prunes
+// entries whose torrents disappeared. It returns the per-provider result.
+func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents []provider.Torrent) (SyncResult, error) {
+	res := SyncResult{}
+	syncStart := time.Now()
+
+	seen := make(map[string]bool) // "torrentID/fileID"
+
+	for _, t := range torrents {
+		// Only torrents with playable files map to STRM; downloading ones
+		// will appear on a later sync.
+		if t.Status != provider.StatusReady {
+			continue
+		}
+		// A hint (set when this torrent was added via search) carries the
+		// canonical TMDB title/season/episode, so different release groups
+		// for the same show land in the same folder. search-and-add targets
+		// one movie/episode, but the torrent itself may bundle extras,
+		// samples or junk files alongside it — applying the hint to every
+		// video file would make them all collide on the same STRM path, so
+		// it's restricted to the single largest file (the actual content).
+		hint, hasHint, err := w.store.GetHint(ctx, string(name), t.ID)
+		if err != nil {
+			w.log.Warn("hint lookup failed", "provider", name, "torrent", t.ID, "err", err)
+			hasHint = false
+		}
+		primaryFileID := ""
+		if hasHint {
+			var bestSize int64 = -1
+			for _, f := range t.Files {
+				if w.isVideo(f.Path, f.SizeBytes) && f.SizeBytes > bestSize {
+					bestSize = f.SizeBytes
+					primaryFileID = f.ID
+				}
+			}
+		}
+		for _, f := range t.Files {
+			if !w.isVideo(f.Path, f.SizeBytes) {
+				continue
+			}
+			if hasHint && f.ID != primaryFileID {
+				continue // extras/sample/junk bundled with a single-title add
+			}
+			key := t.ID + "/" + f.ID
+			seen[key] = true
+
+			var parsed Parsed
+			if hasHint {
+				parsed = Parsed{
+					Kind:      MediaKind(hint.Kind),
+					Title:     hint.Title,
+					ShowTitle: hint.Title,
+					Year:      hint.Year,
+					Season:    hint.Season,
+					Episode:   hint.Episode,
+				}
+			} else {
+				// Prefer the torrent-level release name for parsing context.
+				parsed = Parse(f.Path)
+				if parsed.Kind == KindUnknown || parsed.Title == "" {
+					parsed = Parse(t.Name)
+				}
+			}
+
+			var relPath string
+			if w.cfg.PreserveStructure {
+				relPath = filepath.Join(w.cfg.MoviesDir, sanitizePath(t.Name), sanitizePath(f.Path))
+				relPath = strings.TrimSuffix(relPath, filepath.Ext(relPath)) + ".strm"
+			} else {
+				relPath = parsed.Layout(filepath.Base(f.Path), w.cfg.MoviesDir, w.cfg.TVDir, ".strm")
+			}
+			absPath := w.uniquePath(ctx, string(name), t, f, filepath.Join(w.cfg.Path, relPath))
+
+			// Layout changes (parser fixes, config edits) must not leave
+			// the old .strm behind: remove it when the path moves.
+			if old, err := w.store.GetFile(ctx, string(name), t.ID, f.ID); err == nil &&
+				old.StrmPath != "" && old.StrmPath != absPath {
+				if err := w.removeStrmFile(old.StrmPath); err != nil {
+					w.log.Warn("old strm removal failed", "path", old.StrmPath, "err", err)
+				} else {
+					w.log.Info("relocated strm",
+						"from", old.StrmPath, "to", absPath)
+					res.Updated++
+				}
+			}
+
+			created, err := w.store.UpsertFile(ctx, store.CloudFile{
+				Provider:    string(name),
+				TorrentID:   t.ID,
+				TorrentName: t.Name,
+				FileID:      f.ID,
+				FilePath:    f.Path,
+				SizeBytes:   f.SizeBytes,
+				StrmPath:    absPath,
+			})
+			if err != nil {
+				w.log.Error("store upsert failed", "provider", name, "torrent", t.ID, "file", f.ID, "err", err)
+				continue
+			}
+
+			if err := w.writeStrm(absPath, w.StreamURL(name, t.ID, f.ID)); err != nil {
+				w.log.Error("write strm failed", "path", absPath, "err", err)
+				continue
+			}
+			if created {
+				res.Created++
+			} else {
+				res.Updated++
+			}
+		}
+	}
+
+	// Prune files that vanished from this provider's cloud.
+	tracked, err := w.store.ListFiles(ctx, string(name))
+	if err != nil {
+		return res, err
+	}
+	for _, cf := range tracked {
+		key := cf.TorrentID + "/" + cf.FileID
+		if seen[key] || cf.UpdatedAt.After(syncStart) {
+			continue
+		}
+		if err := w.removeStrm(ctx, cf); err != nil {
+			w.log.Warn("prune failed", "path", cf.StrmPath, "err", err)
+			continue
+		}
+		res.Removed++
+	}
+	return res, nil
+}
+
+// uniquePath returns the library path for a file, disambiguating when a
+// different torrent already claims the same path (e.g. the same episode
+// added from three different release groups). Duplicate entries get a
+// "[group]" suffix instead of silently overwriting each other.
+func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Torrent, f provider.File, want string) string {
+	if w.pathIsFree(ctx, provName, t.ID, want) {
+		return want
+	}
+	ext := filepath.Ext(want)
+	stem := strings.TrimSuffix(want, ext)
+	var candidates []string
+	if label := groupTag(f.Path); label != "" {
+		candidates = append(candidates, stem+" ["+label+"]"+ext)
+	}
+	candidates = append(candidates, stem+" ["+provName+"-"+t.ID+"]"+ext)
+	for _, cand := range candidates {
+		if cand == want {
+			continue
+		}
+		if w.pathIsFree(ctx, provName, t.ID, cand) {
+			w.log.Info("duplicate library entry, using alternate path",
+				"path", cand, "wanted", want)
+			return cand
+		}
+	}
+	return want // exhausted alternatives; last writer wins as before
+}
+
+func (w *Writer) pathIsFree(ctx context.Context, provName, torrentID, path string) bool {
+	owner, err := w.store.FindByStrmPath(ctx, path)
+	if errors.Is(err, store.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		return true // cannot tell; prefer progress over blocking
+	}
+	return owner.Provider == provName && owner.TorrentID == torrentID
+}
+
+// groupTag extracts a short release-group tag ("NTb", "GalaxyTV",
+// "EDGE2020") from the final dash-separated token of a release name;
+// "" when the tail is not a plausible group tag (e.g. episode titles).
+func groupTag(name string) string {
+	parts := strings.Split(name, "-")
+	if len(parts) < 2 {
+		return ""
+	}
+	tag := strings.TrimSuffix(strings.TrimSpace(parts[len(parts)-1]), filepath.Ext(parts[len(parts)-1]))
+	if len(tag) < 2 || len(tag) > 24 {
+		return ""
+	}
+	for _, r := range tag {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return ""
+		}
+	}
+	return tag
+}
+
+// writeStrm writes one .strm file (and its parents) if content changed.
+func (w *Writer) writeStrm(path, url string) error {
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == url {
+		return nil // idempotent
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(url), 0o644); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
+}
+
+// removeStrmFile deletes a .strm file and prunes empty leaf directories up
+// to the library root.
+func (w *Writer) removeStrmFile(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dir := filepath.Dir(path)
+	for dir != w.cfg.Path && strings.HasPrefix(dir, w.cfg.Path) {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(dir); err != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+	return nil
+}
+
+// removeStrm deletes the STRM file and its database row.
+func (w *Writer) removeStrm(ctx context.Context, cf store.CloudFile) error {
+	if cf.StrmPath != "" {
+		if err := w.removeStrmFile(cf.StrmPath); err != nil {
+			return err
+		}
+	}
+	return w.store.DeleteFile(ctx, cf.Provider, cf.TorrentID, cf.FileID)
+}
+
+// RemoveTorrent deletes the STRM files and database rows tracked for one
+// torrent — used when the user manually removes it from the debrid cloud.
+func (w *Writer) RemoveTorrent(ctx context.Context, name provider.Name, torrentID string) error {
+	tracked, err := w.store.ListFiles(ctx, string(name))
+	if err != nil {
+		return err
+	}
+	for _, cf := range tracked {
+		if cf.TorrentID != torrentID {
+			continue
+		}
+		if err := w.removeStrm(ctx, cf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// WipeLibrary deletes every tracked STRM file and its database row across
+// all providers, without touching anything in the debrid cloud itself. Use
+// it to force a clean resync — e.g. after a naming/parser fix — that
+// regenerates every file's path from scratch instead of leaving stale
+// layouts behind.
+func (w *Writer) WipeLibrary(ctx context.Context) (int, error) {
+	tracked, err := w.store.ListFiles(ctx, "")
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, cf := range tracked {
+		if err := w.removeStrm(ctx, cf); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
+}
+
+// LibraryTree returns a sorted listing of STRM paths for the UI.
+func (w *Writer) LibraryTree(ctx context.Context) ([]store.CloudFile, error) {
+	files, err := w.store.ListFiles(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].TorrentName != files[j].TorrentName {
+			return files[i].TorrentName < files[j].TorrentName
+		}
+		return files[i].FilePath < files[j].FilePath
+	})
+	return files, nil
+}
+
+// sanitizePath flattens a torrent path for PreserveStructure mode.
+func sanitizePath(p string) string {
+	parts := strings.FieldsFunc(p, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	var out []string
+	for _, part := range parts {
+		if s := sanitize(part); s != "" {
+			out = append(out, s)
+		}
+	}
+	return filepath.Join(out...)
+}
