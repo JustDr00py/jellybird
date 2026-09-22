@@ -17,3 +17,6 @@
 
 # Claude Code planning artifacts
 /.zcode/
+
+# local dev override (bind-mounts sibling plugin repo's build output)
+/docker-compose.override.yml
