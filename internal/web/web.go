@@ -53,6 +53,7 @@ func Mount(r chi.Router, d Deps) {
 		api.Post("/sync", h.sync)
 		api.Post("/library/wipe", h.wipeLibrary)
 		api.Post("/library/rename", h.renameLibraryItem)
+		api.Get("/library/check", h.libraryCheck)
 		api.Get("/search", h.search)
 		api.Get("/tv/seasons", h.tvSeasons)
 		api.Get("/tv/episodes", h.tvEpisodes)
@@ -199,6 +200,27 @@ func (h *handlers) wipeLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"removed": n})
+}
+
+// libraryCheck answers "is this TMDB title already in the library" for
+// search results. type=movie ignores season/episode; type=tv requires both
+// (a season-pack hint, episode 0, is treated as covering every episode).
+func (h *handlers) libraryCheck(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	tmdbID := q.Get("tmdb_id")
+	kind := q.Get("type")
+	if tmdbID == "" || (kind != "movie" && kind != "tv") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tmdb_id and type=movie|tv are required"})
+		return
+	}
+	season := httpAtoiSafe(q.Get("season"))
+	episode := httpAtoiSafe(q.Get("episode"))
+	exists, err := h.d.Store.HintExists(r.Context(), kind, tmdbID, season, episode)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"exists": exists})
 }
 
 func (h *handlers) renameLibraryItem(w http.ResponseWriter, r *http.Request) {
@@ -349,6 +371,10 @@ func (h *handlers) add(w http.ResponseWriter, r *http.Request) {
 		MediaType string `json:"media_type"`
 		Season    int    `json:"season"`
 		Episode   int    `json:"episode"`
+		// Optional: lets HintExists later answer "is this TMDB title
+		// already in the library" for search results. Empty when the
+		// caller doesn't have (or doesn't pass) a TMDB id.
+		TMDBID string `json:"tmdb_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -364,7 +390,7 @@ func (h *handlers) add(w http.ResponseWriter, r *http.Request) {
 		if body.MediaType == "tv" {
 			kind = "tv"
 		}
-		hint = &store.Hint{Kind: kind, Title: body.Title, Year: body.Year, Season: body.Season, Episode: body.Episode}
+		hint = &store.Hint{Kind: kind, Title: body.Title, Year: body.Year, Season: body.Season, Episode: body.Episode, TMDBID: body.TMDBID}
 	}
 	res, err := h.d.Engine.AddMagnet(r.Context(), body.Magnet, body.InfoHash, body.Provider, hint)
 	if err != nil {

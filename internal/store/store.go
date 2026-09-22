@@ -93,13 +93,23 @@ func (s *Store) migrate() error {
 			year       INTEGER NOT NULL DEFAULT 0,
 			season     INTEGER NOT NULL DEFAULT 0,
 			episode    INTEGER NOT NULL DEFAULT 0,
+			tmdb_id    TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (provider, torrent_id)
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_hints_tmdb ON hints(tmdb_id, kind, season, episode)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	// hints.tmdb_id was added after the initial release; existing databases
+	// need it added via ALTER TABLE, which — unlike CREATE TABLE IF NOT
+	// EXISTS — errors if the column is already there, so that specific
+	// error is swallowed rather than added to the uniform statement list.
+	if _, err := s.db.Exec(`ALTER TABLE hints ADD COLUMN tmdb_id TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return fmt.Errorf("migrate: add hints.tmdb_id: %w", err)
 	}
 	return nil
 }
@@ -179,6 +189,10 @@ type Hint struct {
 	Year      int
 	Season    int
 	Episode   int
+	// TMDBID is optional (empty when the caller didn't supply one, e.g. an
+	// older client or a hint set without search context). Used by
+	// HintExists to answer "is this TMDB title already in the library".
+	TMDBID string
 }
 
 // SetHint records (or replaces) the hint for one torrent.
@@ -192,15 +206,15 @@ func (s *Store) SetHint(ctx context.Context, h Hint) error {
 	}
 	if exists {
 		_, err = s.db.ExecContext(ctx, `
-			UPDATE hints SET kind = ?, title = ?, year = ?, season = ?, episode = ?
+			UPDATE hints SET kind = ?, title = ?, year = ?, season = ?, episode = ?, tmdb_id = ?
 			WHERE provider = ? AND torrent_id = ?`,
-			h.Kind, h.Title, h.Year, h.Season, h.Episode, h.Provider, h.TorrentID)
+			h.Kind, h.Title, h.Year, h.Season, h.Episode, h.TMDBID, h.Provider, h.TorrentID)
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO hints (provider, torrent_id, kind, title, year, season, episode)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		h.Provider, h.TorrentID, h.Kind, h.Title, h.Year, h.Season, h.Episode)
+		INSERT INTO hints (provider, torrent_id, kind, title, year, season, episode, tmdb_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		h.Provider, h.TorrentID, h.Kind, h.Title, h.Year, h.Season, h.Episode, h.TMDBID)
 	return err
 }
 
@@ -208,9 +222,9 @@ func (s *Store) SetHint(ctx context.Context, h Hint) error {
 func (s *Store) GetHint(ctx context.Context, provider, torrentID string) (Hint, bool, error) {
 	var h Hint
 	err := s.db.QueryRowContext(ctx, `
-		SELECT provider, torrent_id, kind, title, year, season, episode
+		SELECT provider, torrent_id, kind, title, year, season, episode, tmdb_id
 		FROM hints WHERE provider = ? AND torrent_id = ?`, provider, torrentID).
-		Scan(&h.Provider, &h.TorrentID, &h.Kind, &h.Title, &h.Year, &h.Season, &h.Episode)
+		Scan(&h.Provider, &h.TorrentID, &h.Kind, &h.Title, &h.Year, &h.Season, &h.Episode, &h.TMDBID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Hint{}, false, nil
 	}
@@ -224,6 +238,33 @@ func (s *Store) GetHint(ctx context.Context, provider, torrentID string) (Hint, 
 func (s *Store) DeleteHint(ctx context.Context, provider, torrentID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM hints WHERE provider = ? AND torrent_id = ?`, provider, torrentID)
 	return err
+}
+
+// HintExists reports whether a hint already exists for the given TMDB title
+// — the "already in your library" check surfaced in search results. For
+// movies, season/episode are ignored. For TV, both are required: a season
+// pack (episode == 0) is treated as covering every episode in that season.
+// tmdbID must be non-empty; an empty ID always reports false, since older
+// hints predating this feature (and any hint set without search context)
+// have no TMDB ID to match against.
+func (s *Store) HintExists(ctx context.Context, kind, tmdbID string, season, episode int) (bool, error) {
+	if tmdbID == "" {
+		return false, nil
+	}
+	var exists bool
+	var err error
+	if kind == "tv" {
+		err = s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM hints
+				WHERE kind = 'tv' AND tmdb_id = ? AND season = ? AND (episode = ? OR episode = 0)
+			)`, tmdbID, season, episode).Scan(&exists)
+	} else {
+		err = s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM hints WHERE kind = 'movie' AND tmdb_id = ?)`,
+			tmdbID).Scan(&exists)
+	}
+	return exists, err
 }
 
 // ListFiles returns all tracked files, optionally filtered by provider.

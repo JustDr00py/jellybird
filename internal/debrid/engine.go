@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -394,7 +395,7 @@ func (e *Engine) AddBest(ctx context.Context, mediaType, imdbID string, tmdbID, 
 			}
 			hint = &store.Hint{
 				Kind: kind, Title: d.DisplayTitle(), Year: d.Year(),
-				Season: season, Episode: episode,
+				Season: season, Episode: episode, TMDBID: strconv.Itoa(tmdbID),
 			}
 		}
 	}

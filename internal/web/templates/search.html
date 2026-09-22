@@ -23,6 +23,18 @@ function q(extra="") { return token ? `?token=${token}${extra ? "&"+extra : ""}`
 $("#searchbtn").onclick = doSearch;
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
 
+async function checkExists(type, tmdbID, season, episode) {
+  try {
+    let extra = `type=${type}&tmdb_id=${tmdbID}`;
+    if (season !== undefined) extra += `&season=${season}`;
+    if (episode !== undefined) extra += `&episode=${episode}`;
+    const res = await api(`/api/library/check${q(extra)}`);
+    return !!res.exists;
+  } catch {
+    return false; // best-effort label; a failed check just means no badge
+  }
+}
+
 async function doSearch() {
   $("#err").textContent = ""; $("#results").innerHTML = "";
   const query = $("#q").value.trim();
@@ -46,6 +58,18 @@ async function doSearch() {
         <div class="muted">${r.media_type === "tv" ? "TV series" : "Movie"}</div>`;
       el.onclick = () => openStreams(r, title);
       $("#results").appendChild(el);
+      // TV shows aren't checked here — "in library" only makes sense per
+      // episode (or a whole season pack), which needs a season picked
+      // first; see the badge added in showEpisodes() instead.
+      if (r.media_type !== "tv") {
+        checkExists("movie", r.id).then(exists => {
+          if (!exists) return;
+          const badge = document.createElement("div");
+          badge.style.marginTop = ".25rem";
+          badge.innerHTML = pill("In library", "ok");
+          el.appendChild(badge);
+        });
+      }
     }
   } catch (e) { $("#err").textContent = e.message; }
 }
@@ -104,6 +128,13 @@ async function showEpisodes(tmdbID, title, season) {
     $$("#dlg-body tr.ep").forEach(tr => {
       tr.onclick = () => loadTorrents("tv", tmdbID, title, "", season.season_number, +tr.dataset.ep);
     });
+    episodes.forEach(e => {
+      checkExists("tv", tmdbID, season.season_number, e.episode_number).then(exists => {
+        if (!exists) return;
+        const tr = $(`#dlg-body tr.ep[data-ep="${e.episode_number}"]`);
+        if (tr) tr.cells[1].innerHTML += " " + pill("in library", "ok");
+      });
+    });
   } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${e.message}</p>`; }
 }
 
@@ -137,6 +168,7 @@ async function loadTorrents(mediaType, tmdbID, title, year, season, episode) {
               title, media_type: mediaType, year: year ? +year : 0,
               season: mediaType === "tv" ? season : 0,
               episode: mediaType === "tv" ? episode : 0,
+              tmdb_id: String(tmdbID),
             })});
           btn.textContent = "✓ added";
           if (res.cached && res.synced) {
