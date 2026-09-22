@@ -3,9 +3,11 @@
 package torbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -89,6 +91,40 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return err
 	}
 	defer resp.Body.Close()
+	return c.handleResponse(resp, out)
+}
+
+// doJSON issues a request with a JSON-encoded body. Some TorBox endpoints
+// (e.g. controltorrent) validate the body as JSON and reject a
+// form-urlencoded POST with 422 Unprocessable Entity.
+func (c *Client) doJSON(ctx context.Context, method, path string, payload, out any) error {
+	var body io.Reader
+	if payload != nil {
+		b, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	if err != nil {
+		return err
+	}
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.http.Do(ctx, req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return c.handleResponse(resp, out)
+}
+
+func (c *Client) handleResponse(resp *http.Response, out any) error {
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("torbox: HTTP %d %s", resp.StatusCode, resp.Status)
 	}
@@ -107,7 +143,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		return fmt.Errorf("torbox: %s", msg)
 	}
-	if len(env.Data) == 0 || string(env.Data) == "null" || out == nil {
+	if len(env.Data) == 0 || string(env.Data) == "null" {
 		return nil
 	}
 	if err := json.Unmarshal(env.Data, out); err != nil {
@@ -288,10 +324,17 @@ func (c *Client) FileLink(ctx context.Context, torrentID, fileID string) (string
 }
 
 // Delete implements provider.Provider via the controltorrent endpoint.
+// controltorrent validates its body as JSON (torrent_id as a number,
+// operation as "delete"/"pause"/"resume"/"reannounce") and 422s on the
+// form-urlencoded "action" field jellybird used to send.
 func (c *Client) Delete(ctx context.Context, torrentID string) error {
-	form := url.Values{
-		"torrent_id": {torrentID},
-		"action":     {"delete"},
+	id, err := strconv.Atoi(torrentID)
+	if err != nil {
+		return fmt.Errorf("torbox: invalid torrent id %q: %w", torrentID, err)
 	}
-	return c.do(ctx, http.MethodPost, "/torrents/controltorrent", nil, form, nil)
+	payload := struct {
+		TorrentID int    `json:"torrent_id"`
+		Operation string `json:"operation"`
+	}{TorrentID: id, Operation: "delete"}
+	return c.doJSON(ctx, http.MethodPost, "/torrents/controltorrent", payload, nil)
 }
