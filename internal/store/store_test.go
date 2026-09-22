@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -59,6 +60,50 @@ func TestFileRoundTrip(t *testing.T) {
 	files, _ = s.ListFiles(ctx, "")
 	if len(files) != 0 {
 		t.Errorf("files after delete = %d", len(files))
+	}
+}
+
+// Regression: requests.tmdb_id has been in CREATE TABLE IF NOT EXISTS since
+// this repo's first commit, which is a no-op against a table that already
+// exists — so a database from an even older, pre-history version of
+// jellybird (long-running remote deployments) never gets that column and
+// every INSERT/SELECT touching it fails with "no such column: tmdb_id".
+func TestMigrateAddsRequestsTmdbID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE requests (
+		source TEXT NOT NULL, source_id TEXT NOT NULL, media_type TEXT NOT NULL,
+		title TEXT NOT NULL, year INTEGER NOT NULL DEFAULT 0,
+		imdb_id TEXT NOT NULL DEFAULT '', season INTEGER NOT NULL DEFAULT 0,
+		episode INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL,
+		detail TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL,
+		PRIMARY KEY (source, source_id)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on pre-tmdb_id database: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	if err := s.UpsertRequest(ctx, Request{
+		Source: "jellyseerr", SourceID: "1", MediaType: "movie",
+		Title: "Dune", TMDBID: "438631", Status: "pending",
+	}); err != nil {
+		t.Fatalf("UpsertRequest after migration: %v", err)
+	}
+	reqs, err := s.ListRequests(ctx, "")
+	if err != nil || len(reqs) != 1 || reqs[0].TMDBID != "438631" {
+		t.Errorf("reqs=%+v err=%v", reqs, err)
 	}
 }
 

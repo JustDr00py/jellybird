@@ -103,13 +103,21 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
-	// hints.tmdb_id was added after the initial release; existing databases
-	// need it added via ALTER TABLE, which — unlike CREATE TABLE IF NOT
-	// EXISTS — errors if the column is already there, so that specific
-	// error is swallowed rather than added to the uniform statement list.
-	if _, err := s.db.Exec(`ALTER TABLE hints ADD COLUMN tmdb_id TEXT NOT NULL DEFAULT ''`); err != nil &&
-		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		return fmt.Errorf("migrate: add hints.tmdb_id: %w", err)
+	// hints.tmdb_id and requests.tmdb_id predate this repo's history on
+	// long-running databases (both columns have always been in their
+	// CREATE TABLE IF NOT EXISTS above, which is a no-op against a table
+	// that already exists) — existing databases need them added via ALTER
+	// TABLE, which — unlike CREATE TABLE IF NOT EXISTS — errors if the
+	// column is already there, so that specific error is swallowed rather
+	// than added to the uniform statement list.
+	for _, alter := range []string{
+		`ALTER TABLE hints ADD COLUMN tmdb_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE requests ADD COLUMN tmdb_id TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.Exec(alter); err != nil &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			return fmt.Errorf("migrate: %s: %w", alter, err)
+		}
 	}
 	return nil
 }
