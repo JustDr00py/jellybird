@@ -13,7 +13,14 @@
     <tr><th>Sync interval</th><td>{{.Config.Sync.Interval}}</td></tr>
     <tr><th>Gateway address</th><td><code>{{.Config.Server.Address}}</code></td></tr>
     <tr><th>External URL</th><td><code>{{or .Config.Server.ExternalURL "(request host)"}}</code></td></tr>
-    <tr><th>Auth token</th><td>{{if .Config.Server.Token}}enabled{{else}}disabled{{end}}</td></tr>
+    <tr><th>Auth token</th><td>
+      {{if .Config.Server.Token}}
+        <span id="authTokenMasked">••••••••</span><code id="authToken" style="display:none">{{.Config.Server.Token}}</code>
+        <button type="button" class="ghost" onclick="toggleToken(this)">Show</button>
+        <button type="button" class="ghost" onclick="copyToken(this)">Copy</button>
+        <span id="tokenFeedback" class="muted"></span>
+      {{else}}disabled{{end}}
+    </td></tr>
     <tr><th>Search</th><td>{{if .Config.HasSearch}}enabled (TMDB + Torrentio){{else}}disabled — set tmdb.api_key{{end}}</td></tr>
     <tr><th>Watchlist</th><td>{{if .Config.HasWatchlist}}Jellyseerr at {{.Config.Watchlist.JellyseerrURL}}{{else}}disabled{{end}}</td></tr>
     <tr><th>Version</th><td>{{.Version}}</td></tr>
@@ -29,6 +36,40 @@
 <script>
 let token = new URLSearchParams(location.search).get("token") || "";
 function q() { return token ? `?token=${token}` : ""; }
+
+function toggleToken(btn) {
+  const masked = $("#authTokenMasked"), full = $("#authToken");
+  const showing = full.style.display !== "none";
+  full.style.display = showing ? "none" : "inline";
+  masked.style.display = showing ? "inline" : "none";
+  btn.textContent = showing ? "Show" : "Hide";
+}
+
+function copyToken() {
+  const text = $("#authToken").textContent;
+  const feedback = $("#tokenFeedback");
+  const done = (ok) => {
+    feedback.textContent = ok ? "Copied!" : "Copy failed — select the token above manually.";
+    setTimeout(() => { feedback.textContent = ""; }, 2000);
+  };
+  // navigator.clipboard requires a secure context (HTTPS or localhost);
+  // jellybird is commonly run over plain HTTP on a LAN/Docker network, so
+  // fall back to the older execCommand path there.
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => done(true), () => done(false));
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch { ok = false; }
+  document.body.removeChild(ta);
+  done(ok);
+}
 
 (async () => {
   try {
