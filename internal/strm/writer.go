@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -260,14 +261,19 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 				}
 			}
 
-			var relPath string
+			var relPath, label string
 			if w.cfg.PreserveStructure {
 				relPath = filepath.Join(w.cfg.MoviesDir, sanitizePath(t.Name), sanitizePath(f.Path))
 				relPath = strings.TrimSuffix(relPath, filepath.Ext(relPath)) + ".strm"
 			} else {
 				relPath = parsed.Layout(filepath.Base(f.Path), w.cfg.MoviesDir, w.cfg.TVDir, ".strm")
+				// Only clean "Title (Year)" / "Show SxxExx" names get a
+				// version label; kept-as-is names already carry theirs.
+				if parsed.Kind == KindMovie || (parsed.Kind == KindTV && parsed.Episode > 0) {
+					label = versionLabel(f.Path, t.Name, f.SizeBytes)
+				}
 			}
-			absPath := w.uniquePath(ctx, string(name), t, f, filepath.Join(w.cfg.Path, relPath))
+			absPath := w.uniquePath(ctx, string(name), t, f, filepath.Join(w.cfg.Path, relPath), label)
 
 			// Layout changes (parser fixes, config edits) must not leave
 			// the old .strm behind: remove it when the path moves.
@@ -335,29 +341,58 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 	return res, nil
 }
 
-// uniquePath returns the library path for a file, disambiguating when a
-// different torrent already claims the same path (e.g. the same episode
-// added from three different release groups). Duplicate entries get a
-// "[group]" suffix instead of silently overwriting each other.
-func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Torrent, f provider.File, want string) string {
+// versionLabel is the label Jellyfin shows for a file in its version picker:
+// the resolution (from the file name, else the torrent name) and the file
+// size, e.g. "1080p 4.2GB". Either part is left out when unknown.
+func versionLabel(filePath, torrentName string, size int64) string {
+	res := Resolution(filePath)
+	if res == "" {
+		res = Resolution(torrentName)
+	}
+	return strings.TrimSpace(res + " " + formatSize(size))
+}
+
+// formatSize renders a byte count as a short label: "4.2GB", "2GB", "850MB".
+func formatSize(b int64) string {
+	const mb, gb = 1 << 20, 1 << 30
+	switch {
+	case b >= gb:
+		return strings.TrimSuffix(strconv.FormatFloat(float64(b)/gb, 'f', 1, 64), ".0") + "GB"
+	case b >= mb:
+		return strconv.FormatInt(b/mb, 10) + "MB"
+	}
+	return ""
+}
+
+// uniquePath returns the library path for a file. A non-empty label is
+// appended in Jellyfin's multi-version form ("Title (2010) - 1080p.strm"),
+// which Jellyfin shows as the version name. When a different file already
+// claims the path (e.g. the same episode added from two releases), a
+// numbered label ("1080p (2)", or "Version 2" without a label) keeps them
+// from silently overwriting each other.
+func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Torrent, f provider.File, base, label string) string {
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	want := base
+	numbered := stem + " - Version %d" + ext
+	if label != "" {
+		want = stem + " - " + label + ext
+		numbered = stem + " - " + label + " (%d)" + ext
+	}
 	if w.pathIsFree(ctx, provName, t.ID, f.ID, want) {
 		return want
 	}
-	ext := filepath.Ext(want)
-	stem := strings.TrimSuffix(want, ext)
 	var candidates []string
-	if label := groupTag(f.Path); label != "" {
-		candidates = append(candidates, stem+" ["+label+"]"+ext)
+	for n := 2; n <= 9; n++ {
+		candidates = append(candidates, fmt.Sprintf(numbered, n))
 	}
-	candidates = append(candidates, stem+" ["+provName+"-"+t.ID+"]"+ext)
+	tail := strings.TrimSuffix(want, ext)
+	candidates = append(candidates, tail+" ["+provName+"-"+t.ID+"]"+ext)
 	// Two files of the same torrent can map to one path too (a multi-series
 	// pack numbering every sub-series from episode 1, two discs of one
 	// film); the file ID always tells them apart.
-	candidates = append(candidates, stem+" ["+provName+"-"+t.ID+"-"+f.ID+"]"+ext)
+	candidates = append(candidates, tail+" ["+provName+"-"+t.ID+"-"+f.ID+"]"+ext)
 	for _, cand := range candidates {
-		if cand == want {
-			continue
-		}
 		if w.pathIsFree(ctx, provName, t.ID, f.ID, cand) {
 			w.log.Info("duplicate library entry, using alternate path",
 				"path", cand, "wanted", want)
@@ -376,26 +411,6 @@ func (w *Writer) pathIsFree(ctx context.Context, provName, torrentID, fileID, pa
 		return true // cannot tell; prefer progress over blocking
 	}
 	return !taken
-}
-
-// groupTag extracts a short release-group tag ("NTb", "GalaxyTV",
-// "EDGE2020") from the final dash-separated token of a release name;
-// "" when the tail is not a plausible group tag (e.g. episode titles).
-func groupTag(name string) string {
-	parts := strings.Split(name, "-")
-	if len(parts) < 2 {
-		return ""
-	}
-	tag := strings.TrimSuffix(strings.TrimSpace(parts[len(parts)-1]), filepath.Ext(parts[len(parts)-1]))
-	if len(tag) < 2 || len(tag) > 24 {
-		return ""
-	}
-	for _, r := range tag {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			return ""
-		}
-	}
-	return tag
 }
 
 // writeStrm writes one .strm file (and its parents) if content changed.

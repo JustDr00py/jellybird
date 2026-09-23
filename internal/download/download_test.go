@@ -100,7 +100,7 @@ func (e *env) sync(t *testing.T, ts ...provider.Torrent) {
 }
 
 func (e *env) strmPath() string {
-	return filepath.Join(e.lib, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024).strm")
+	return filepath.Join(e.lib, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p.strm")
 }
 func (e *env) localPath() string { return strings.TrimSuffix(e.strmPath(), ".strm") + ".mkv" }
 

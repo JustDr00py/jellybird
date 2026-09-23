@@ -68,7 +68,7 @@ func TestSyncProviderWritesStrm(t *testing.T) {
 	}
 
 	// Check the actual files exist with the right URLs.
-	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024).strm")
+	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p 7.5GB.strm")
 	body, err := os.ReadFile(dune)
 	if err != nil {
 		t.Fatalf("movie strm missing: %v", err)
@@ -76,7 +76,7 @@ func TestSyncProviderWritesStrm(t *testing.T) {
 	if want := "http://gw:8097/stream/realdebrid/T1/1"; string(body) != want {
 		t.Errorf("strm body = %q, want %q", body, want)
 	}
-	ep := filepath.Join(libPath, "Shows", "Severance", "Season 02", "Severance S02E01.strm")
+	ep := filepath.Join(libPath, "Shows", "Severance", "Season 02", "Severance S02E01 - 2160p 8.4GB.strm")
 	if _, err := os.Stat(ep); err != nil {
 		t.Fatalf("episode strm missing: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestSyncBareEpisodeMarkerBorrowsTorrentTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(libPath, "Shows", "Финес и Ферб", "Season 01", "Финес и Ферб S01E08.strm")
+	want := filepath.Join(libPath, "Shows", "Финес и Ферб", "Season 01", "Финес и Ферб S01E08 - 476MB.strm")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("rescued path missing: %s (%v)", want, err)
 	}
@@ -139,7 +139,7 @@ func TestSyncSeasonFolderRescue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(libPath, "Shows", "Phineas and Ferb", "Season 03", "Phineas and Ferb S03E130.strm")
+	want := filepath.Join(libPath, "Shows", "Phineas and Ferb", "Season 03", "Phineas and Ferb S03E130 - 476MB.strm")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("rescued path missing: %s (%v)", want, err)
 	}
@@ -156,7 +156,7 @@ func TestSyncEpisodeWordTakesTorrentSeason(t *testing.T) {
 	if _, err := w.SyncProvider(context.Background(), provider.RealDebrid, torrents); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(libPath, "Shows", "Breaking Bad", "Season 04", "Breaking Bad S04E01.strm")
+	want := filepath.Join(libPath, "Shows", "Breaking Bad", "Season 04", "Breaking Bad S04E01 - 1080p 476MB.strm")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("missing %s (%v)", want, err)
 	}
@@ -237,8 +237,8 @@ func TestSyncSpecialsGetSeasonZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 01", "The Amazing World of Gumball S01E15.strm"),
-		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 00", "The Amazing World of Gumball S00E15.strm"),
+		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 01", "The Amazing World of Gumball S01E15 - 1080p 476MB.strm"),
+		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 00", "The Amazing World of Gumball S00E15 - 1080p 476MB.strm"),
 	} {
 		if _, err := os.Stat(want); err != nil {
 			t.Errorf("missing %s", want)
@@ -266,7 +266,7 @@ func TestSyncProviderPrunesDeleted(t *testing.T) {
 	if _, err := os.Stat(ep); !os.IsNotExist(err) {
 		t.Errorf("empty show dir should be pruned, stat err = %v", err)
 	}
-	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024).strm")
+	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p 7.5GB.strm")
 	if _, err := os.Stat(dune); err != nil {
 		t.Errorf("surviving movie missing: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestSyncRelocatesOnLayoutChange(t *testing.T) {
 	if _, err := w.SyncProvider(ctx, provider.RealDebrid, sampleTorrents()); err != nil {
 		t.Fatal(err)
 	}
-	oldPath := filepath.Join(libPath, "Shows", "Severance", "Season 02", "Severance S02E01.strm")
+	oldPath := filepath.Join(libPath, "Shows", "Severance", "Season 02", "Severance S02E01 - 2160p 8.4GB.strm")
 	if _, err := os.Stat(oldPath); err != nil {
 		t.Fatalf("initial file missing: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestSyncRelocatesOnLayoutChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newPath := filepath.Join(libPath, "Series", "Severance", "Season 02", "Severance S02E01.strm")
+	newPath := filepath.Join(libPath, "Series", "Severance", "Season 02", "Severance S02E01 - 2160p 8.4GB.strm")
 	if _, err := os.Stat(newPath); err != nil {
 		t.Fatalf("relocated file missing: %v", err)
 	}
@@ -423,8 +423,8 @@ func TestSyncDuplicateEpisodesGetUniquePaths(t *testing.T) {
 	if len(files) != 2 || len(paths) != 2 {
 		t.Fatalf("expected 2 rows with distinct paths, got %d rows %d paths: %+v", len(files), len(paths), files)
 	}
-	plain := filepath.Join(libPath, "Shows", "Tulsa King", "Season 01", "Tulsa King S01E01.strm")
-	alt := filepath.Join(libPath, "Shows", "Tulsa King", "Season 01", "Tulsa King S01E01 [GalaxyTV].strm")
+	plain := filepath.Join(libPath, "Shows", "Tulsa King", "Season 01", "Tulsa King S01E01 - 1080p 2GB.strm")
+	alt := filepath.Join(libPath, "Shows", "Tulsa King", "Season 01", "Tulsa King S01E01 - 1080p 2GB (2).strm")
 	if _, err := os.Stat(plain); err != nil {
 		t.Errorf("plain path missing: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestSyncUsesHintOverRawFilename(t *testing.T) {
 	}
 
 	// sanitize() replaces the colon with a space.
-	want := filepath.Join(libPath, "Shows", "Frieren Beyond Journey's End", "Season 02", "Frieren Beyond Journey's End S02E04.strm")
+	want := filepath.Join(libPath, "Shows", "Frieren Beyond Journey's End", "Season 02", "Frieren Beyond Journey's End S02E04 - 1080p 476MB.strm")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("hinted path missing: %s (%v)", want, err)
 	}
@@ -504,7 +504,7 @@ func TestSyncHintIgnoresJunkFilesInSameTorrent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(libPath, "Movies", "Harry Potter and the Philosopher's Stone (2001)", "Harry Potter and the Philosopher's Stone (2001).strm")
+	want := filepath.Join(libPath, "Movies", "Harry Potter and the Philosopher's Stone (2001)", "Harry Potter and the Philosopher's Stone (2001) - 1080p 8.4GB.strm")
 	body, err := os.ReadFile(want)
 	if err != nil {
 		t.Fatalf("hinted movie path missing: %v", err)
@@ -529,7 +529,7 @@ func TestWriterRemoveTorrent(t *testing.T) {
 	if _, err := w.SyncProvider(ctx, provider.RealDebrid, sampleTorrents()); err != nil {
 		t.Fatal(err)
 	}
-	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024).strm")
+	dune := filepath.Join(libPath, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p 7.5GB.strm")
 	if _, err := os.Stat(dune); err != nil {
 		t.Fatalf("setup: dune strm missing: %v", err)
 	}
@@ -552,17 +552,41 @@ func TestWriterRemoveTorrent(t *testing.T) {
 	}
 }
 
-func TestGroupTag(t *testing.T) {
+func TestVersionLabel(t *testing.T) {
+	cases := []struct {
+		file, torrent string
+		size          int64
+		want          string
+	}{
+		{"Dune.Part.Two.2024.1080p.mkv", "", 8_000_000_000, "1080p 7.5GB"},
+		{"Ep 01.mkv", "Breaking Bad S04 1080p", 500_000_000, "1080p 476MB"},
+		{"Movie.2020.2160p.mkv", "", 2 << 30, "2160p 2GB"},
+		{"Movie.2020.mkv", "", 3 << 30, "3GB"},
+		{"Movie.2020.720p.mkv", "", 0, "720p"},
+		{"Movie.2020.mkv", "", 0, ""},
+	}
+	for _, c := range cases {
+		if got := versionLabel(c.file, c.torrent, c.size); got != c.want {
+			t.Errorf("versionLabel(%q, %q, %d) = %q, want %q", c.file, c.torrent, c.size, got, c.want)
+		}
+	}
+}
+
+func TestResolution(t *testing.T) {
 	cases := map[string]string{
-		"Tulsa.King.S01E01.720p.AMZN.WEBRip.x264-GalaxyTV.mkv": "GalaxyTV",
-		"Moana.2016.1080p.BluRay.DDP.7.1.x265-EDGE2020.mkv":    "EDGE2020",
-		"Tulsa King (2022) - S01E01 - Go West, Old Man.mkv":    "", // episode title, not a group
-		"[SubsPlease] Sousou no Frieren S2 - 04 (1080p).mkv":   "",
-		"Movie.2020.mkv": "",
+		"Tulsa.King.S01E01.720p.AMZN.WEBRip.x264-GalaxyTV.mkv": "720p",
+		"Moana.2016.1080p.BluRay.DDP.7.1.x265-EDGE2020.mkv":    "1080p",
+		"Dune.Part.Two.2024.2160p.UHD.BluRay.x265.mkv":         "2160p",
+		"Dune Part Two 2024 4K HDR.mkv":                        "2160p",
+		"Old.Show.S01E01.1080i.HDTV.mkv":                       "1080p",
+		"Show.S01E01.1920x1080.mkv":                            "1080p",
+		"[SubsPlease] Sousou no Frieren S2 - 04 (1080p).mkv":   "1080p",
+		"Movie.2020.DVDRip.mkv":                                "",
+		"Movie.2020.x265.mkv":                                  "",
 	}
 	for in, want := range cases {
-		if got := groupTag(in); got != want {
-			t.Errorf("groupTag(%q) = %q, want %q", in, got, want)
+		if got := Resolution(in); got != want {
+			t.Errorf("Resolution(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

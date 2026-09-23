@@ -109,6 +109,43 @@ func EpisodeFromFileName(name string) int {
 	return 0
 }
 
+// resolutionRe finds a resolution tag ("1080p", "2160p", "4K", "UHD") or a
+// frame size ("1920x1080") as a standalone token.
+var resolutionRe = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:(\d{3,4})[pi]|4k|uhd|\d{3,4}x(\d{3,4}))(?:$|[^a-z0-9])`)
+
+// Resolution returns a normalized resolution label ("2160p", "1080p",
+// "720p", ...) found in a release or file name, or "" when none is present.
+func Resolution(name string) string {
+	m := resolutionRe.FindStringSubmatch(filepath.Base(name))
+	if m == nil {
+		return ""
+	}
+	if m[1] == "" && m[2] == "" { // 4K / UHD
+		return "2160p"
+	}
+	height := atoi(m[1])
+	if m[2] != "" {
+		height = atoi(m[2])
+	}
+	switch {
+	case height >= 2000:
+		return "2160p"
+	case height >= 1400:
+		return "1440p"
+	case height >= 1000:
+		return "1080p"
+	case height >= 700:
+		return "720p"
+	case height >= 560:
+		return "576p"
+	case height >= 460:
+		return "480p"
+	case height >= 240:
+		return strconv.Itoa(height) + "p"
+	}
+	return ""
+}
+
 // SeasonFromPath reports the season number from the file's immediate parent
 // directory when it's named "Season NN" (or "SNN"). Some torrents nest
 // absolute-numbered specials/movies under a season folder without repeating
