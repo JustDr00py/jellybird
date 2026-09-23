@@ -27,6 +27,10 @@ type Parsed struct {
 	Episode int
 	// ShowTitle is set for TV episodes (may equal Title).
 	ShowTitle string
+	// Specials marks an explicit season 0 ("S00E15"): Jellyfin's Specials,
+	// filed under "Season 00". A zero Season otherwise means "unknown" and
+	// is laid out as season 1.
+	Specials bool
 	// SeasonAssumed marks a Season of 1 that was guessed because the name
 	// had an episode number but no season at all. Callers with better
 	// context (torrent name, "Season NN" folder) should override it.
@@ -138,6 +142,7 @@ func Parse(name string) Parsed {
 	if m := multiEpRe.FindStringSubmatch(base); m != nil {
 		p.Kind = KindTV
 		p.Season = atoi(m[1])
+		p.Specials = p.Season == 0
 		p.Episode = atoi(m[2])
 		p.ShowTitle = cleanTitle(base, m[0])
 		p.Title = p.ShowTitle
@@ -147,6 +152,7 @@ func Parse(name string) Parsed {
 	if m := sxeRe.FindStringSubmatch(base); m != nil && !isCodecFragment(m[2], m[3]) {
 		p.Kind = KindTV
 		p.Season = atoi(m[1])
+		p.Specials = p.Season == 0
 		p.Episode = atoi(m[3])
 		p.ShowTitle = cleanTitle(base, m[0])
 		// Episode files can carry the show year too.
@@ -330,7 +336,7 @@ func (p Parsed) Layout(fileName, moviesDir, tvDir, ext string) string {
 			show = "Unknown Show"
 		}
 		season := p.Season
-		if season == 0 {
+		if season == 0 && !p.Specials {
 			season = 1
 		}
 		ep := p.Episode

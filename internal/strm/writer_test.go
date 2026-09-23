@@ -161,6 +161,90 @@ func TestSyncEpisodeWordTakesTorrentSeason(t *testing.T) {
 	}
 }
 
+// Regression: files of ONE torrent that map to the same path (a
+// multi-series pack numbering every sub-series from 01, two discs of one
+// film) all claimed it, overwriting each other's .strm on every sync — so
+// Jellyfin rescanned those folders every 10 minutes and intermittently
+// showed an empty library. Each must get its own stable path.
+func TestSyncSameTorrentCollisionsGetOwnPaths(t *testing.T) {
+	w, st, _ := testWriter(t)
+	ctx := context.Background()
+	torrents := []provider.Torrent{{
+		ID: "BB", Name: "Beyblade Burst Complete Series 1-6 (English Subbed Only)", Status: provider.StatusReady,
+		Files: []provider.File{
+			{ID: "1", Path: "Beyblade Burst (English Subbed)/Beyblade Burst 01 (1080p English Subbed).mkv", SizeBytes: 500_000_000},
+			{ID: "2", Path: "Beyblade Burst God (English Subbed)/Beyblade Burst God 01 (1080p English Subbed).mkv", SizeBytes: 500_000_000},
+			{ID: "3", Path: "Beyblade Burst Cho-Z (English Subbed)/Beyblade Burst Cho-Z 01 (1080p English Subbed).mkv", SizeBytes: 500_000_000},
+		},
+	}}
+	if _, err := w.SyncProvider(ctx, provider.RealDebrid, torrents); err != nil {
+		t.Fatal(err)
+	}
+	files, _ := st.ListFiles(ctx, "")
+	paths := map[string]string{}
+	for _, f := range files {
+		if other, dup := paths[f.StrmPath]; dup {
+			t.Fatalf("files %s and %s share %s", other, f.FileID, f.StrmPath)
+		}
+		paths[f.StrmPath] = f.FileID
+		body, err := os.ReadFile(f.StrmPath)
+		if err != nil || !strings.HasSuffix(string(body), "/BB/"+f.FileID) {
+			t.Fatalf("%s holds %q, want file %s's link", f.StrmPath, body, f.FileID)
+		}
+	}
+	if len(paths) != 3 {
+		t.Fatalf("got %d distinct paths, want 3", len(paths))
+	}
+
+	// A second sync with nothing changed must not move or rewrite anything.
+	mtimes := map[string]int64{}
+	for p := range paths {
+		st, _ := os.Stat(p)
+		mtimes[p] = st.ModTime().UnixNano()
+	}
+	res, err := w.SyncProvider(ctx, provider.RealDebrid, torrents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, _ = st.ListFiles(ctx, "")
+	for _, f := range files {
+		if paths[f.StrmPath] != f.FileID {
+			t.Fatalf("file %s moved to %s on an unchanged sync", f.FileID, f.StrmPath)
+		}
+		st, err := os.Stat(f.StrmPath)
+		if err != nil || st.ModTime().UnixNano() != mtimes[f.StrmPath] {
+			t.Fatalf("%s rewritten on an unchanged sync", f.StrmPath)
+		}
+	}
+	if res.Created != 0 {
+		t.Fatalf("second sync created %d", res.Created)
+	}
+}
+
+// Regression: S00E15 (a special) was filed as S01E15 and collided with the
+// real S01E15. Explicit season 0 goes to Jellyfin's "Season 00".
+func TestSyncSpecialsGetSeasonZero(t *testing.T) {
+	w, _, libPath := testWriter(t)
+	torrents := []provider.Torrent{{
+		ID: "G", Name: "The Amazing World of Gumball (2011) S01", Status: provider.StatusReady,
+		Files: []provider.File{
+			{ID: "1", Path: "The Amazing World of Gumball (2011) S01E15 - The Gi.1080p.H265.EAC3.6CH-MNKYDDL.mkv", SizeBytes: 500_000_000},
+			{ID: "2", Path: "The Amazing World of Gumball (2011) S00E15 - Darwin's Yearbook Banana Joe.1080p.H265.EAC3.6CH-MNKYDDL.mkv", SizeBytes: 500_000_000},
+		},
+	}}
+	if _, err := w.SyncProvider(context.Background(), provider.RealDebrid, torrents); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 01", "The Amazing World of Gumball S01E15.strm"),
+		filepath.Join(libPath, "Shows", "The Amazing World of Gumball", "Season 00", "The Amazing World of Gumball S00E15.strm"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("missing %s", want)
+		}
+	}
+}
+
 func TestSyncProviderPrunesDeleted(t *testing.T) {
 	w, _, libPath := testWriter(t)
 	ctx := context.Background()

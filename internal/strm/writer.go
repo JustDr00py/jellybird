@@ -2,7 +2,6 @@ package strm
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -202,6 +201,8 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 					Year:      hint.Year,
 					Season:    hint.Season,
 					Episode:   hint.Episode,
+					// TMDB numbers specials as season 0.
+					Specials: hint.Kind == string(KindTV) && hint.Season == 0 && hint.Episode > 0,
 				}
 			} else {
 				// Prefer the torrent-level release name for parsing context.
@@ -337,7 +338,7 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 // added from three different release groups). Duplicate entries get a
 // "[group]" suffix instead of silently overwriting each other.
 func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Torrent, f provider.File, want string) string {
-	if w.pathIsFree(ctx, provName, t.ID, want) {
+	if w.pathIsFree(ctx, provName, t.ID, f.ID, want) {
 		return want
 	}
 	ext := filepath.Ext(want)
@@ -347,11 +348,15 @@ func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Tor
 		candidates = append(candidates, stem+" ["+label+"]"+ext)
 	}
 	candidates = append(candidates, stem+" ["+provName+"-"+t.ID+"]"+ext)
+	// Two files of the same torrent can map to one path too (a multi-series
+	// pack numbering every sub-series from episode 1, two discs of one
+	// film); the file ID always tells them apart.
+	candidates = append(candidates, stem+" ["+provName+"-"+t.ID+"-"+f.ID+"]"+ext)
 	for _, cand := range candidates {
 		if cand == want {
 			continue
 		}
-		if w.pathIsFree(ctx, provName, t.ID, cand) {
+		if w.pathIsFree(ctx, provName, t.ID, f.ID, cand) {
 			w.log.Info("duplicate library entry, using alternate path",
 				"path", cand, "wanted", want)
 			return cand
@@ -360,15 +365,15 @@ func (w *Writer) uniquePath(ctx context.Context, provName string, t provider.Tor
 	return want // exhausted alternatives; last writer wins as before
 }
 
-func (w *Writer) pathIsFree(ctx context.Context, provName, torrentID, path string) bool {
-	owner, err := w.store.FindByStrmPath(ctx, path)
-	if errors.Is(err, store.ErrNotFound) {
-		return true
-	}
+// pathIsFree reports whether no other file — including another file of
+// the same torrent — already owns path. Two owners would overwrite each
+// other's .strm on every sync, which makes Jellyfin rescan constantly.
+func (w *Writer) pathIsFree(ctx context.Context, provName, torrentID, fileID, path string) bool {
+	taken, err := w.store.StrmPathTakenByOther(ctx, path, provName, torrentID, fileID)
 	if err != nil {
 		return true // cannot tell; prefer progress over blocking
 	}
-	return owner.Provider == provName && owner.TorrentID == torrentID
+	return !taken
 }
 
 // groupTag extracts a short release-group tag ("NTb", "GalaxyTV",

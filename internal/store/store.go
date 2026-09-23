@@ -367,6 +367,17 @@ func (s *Store) ListFilesPage(ctx context.Context, provider, query string, limit
 }
 
 // FindByStrmPath resolves a STRM path back to a cloud file.
+// StrmPathTakenByOther reports whether any file other than the given one
+// is already mapped to strmPath.
+func (s *Store) StrmPathTakenByOther(ctx context.Context, strmPath, provider, torrentID, fileID string) (bool, error) {
+	var taken bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM files WHERE strm_path = ?
+			AND NOT (provider = ? AND torrent_id = ? AND file_id = ?))`,
+		strmPath, provider, torrentID, fileID).Scan(&taken)
+	return taken, err
+}
+
 func (s *Store) FindByStrmPath(ctx context.Context, strmPath string) (CloudFile, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT provider, torrent_id, torrent_name, file_id, file_path, size_bytes, strm_path, updated_at
