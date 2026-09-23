@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/debrid"
 	"jellybird/internal/provider"
@@ -35,83 +36,61 @@ type Deps struct {
 
 // Mount registers all routes on r.
 func Mount(r chi.Router, d Deps) {
-	h := &handlers{d: d}
+	h := &handlers{d: d, limiter: auth.NewLimiter(5, 15*time.Minute)}
+
+	// Rejects cross-origin browser POST/DELETE (CSRF) using Sec-Fetch-Site /
+	// Origin; non-browser clients like the Jellyfin plugin send neither and
+	// pass through to token auth.
+	r.Use(http.NewCrossOriginProtection().Handler)
 
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": d.Version})
 	})
 
 	// Player-facing resolver (also used by media servers reading .strm).
+	// Stays on the ?token= query param baked into .strm files.
 	r.Handle("/stream/*", d.Resolver)
 
-	// JSON API (same-origin from the UI; token-gated when configured).
-	r.Route("/api", func(api chi.Router) {
-		api.Use(d.apiAuth)
-		api.Get("/cloud", h.cloud)
-		api.Delete("/cloud", h.removeTorrent)
-		api.Get("/library", h.library)
-		api.Post("/sync", h.sync)
-		api.Post("/library/wipe", h.wipeLibrary)
-		api.Post("/library/rename", h.renameLibraryItem)
-		api.Get("/library/check", h.libraryCheck)
-		api.Get("/search", h.search)
-		api.Get("/tv/seasons", h.tvSeasons)
-		api.Get("/tv/episodes", h.tvEpisodes)
-		api.Get("/torrents", h.torrents)
-		api.Post("/add", h.add)
-		api.Get("/requests", h.requests)
-		api.Get("/accounts", h.accounts)
+	r.Group(func(r chi.Router) {
+		r.Use(securityHeaders)
+
+		// Login / first-run setup (public).
+		r.Get("/login", h.loginPage)
+		r.Post("/login", h.login)
+		r.Post("/logout", h.logout)
+		r.Get("/setup", h.setupPage)
+		r.Post("/setup", h.setup)
+
+		// JSON API: dashboard session, or X-Jellybird-Token header for the
+		// Jellyfin plugin and scripts.
+		r.Route("/api", func(api chi.Router) {
+			api.Use(h.apiAuth)
+			api.Get("/cloud", h.cloud)
+			api.Delete("/cloud", h.removeTorrent)
+			api.Get("/library", h.library)
+			api.Post("/sync", h.sync)
+			api.Post("/library/wipe", h.wipeLibrary)
+			api.Post("/library/rename", h.renameLibraryItem)
+			api.Get("/library/check", h.libraryCheck)
+			api.Get("/search", h.search)
+			api.Get("/tv/seasons", h.tvSeasons)
+			api.Get("/tv/episodes", h.tvEpisodes)
+			api.Get("/torrents", h.torrents)
+			api.Post("/add", h.add)
+			api.Get("/requests", h.requests)
+			api.Get("/accounts", h.accounts)
+			api.Post("/account/password", h.changePassword)
+		})
+
+		// Dashboard.
+		r.Group(func(ui chi.Router) {
+			ui.Use(h.requireUser)
+			ui.Get("/", h.index)
+			ui.Get("/search", h.searchPage)
+			ui.Get("/cloud", h.cloudPage)
+			ui.Get("/settings", h.settingsPage)
+		})
 	})
-
-	// Dashboard.
-	r.Group(func(ui chi.Router) {
-		ui.Use(d.uiAuth)
-		ui.Get("/", h.index)
-		ui.Get("/search", h.searchPage)
-		ui.Get("/cloud", h.cloudPage)
-		ui.Get("/settings", h.settingsPage)
-	})
-}
-
-// --- auth helpers ---------------------------------------------------------
-
-func (d Deps) apiAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !d.checkToken(r) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (d Deps) uiAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !d.checkToken(r) {
-			w.Header().Set("WWW-Authenticate", `Basic realm="jellybird"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (d Deps) checkToken(r *http.Request) bool {
-	if d.Config.Server.Token == "" {
-		return true
-	}
-	// Bearer/JSON, query param, or basic-auth password.
-	if r.URL.Query().Get("token") == d.Config.Server.Token {
-		return true
-	}
-	if r.Header.Get("X-Jellybird-Token") == d.Config.Server.Token {
-		return true
-	}
-	_, pass, ok := r.BasicAuth()
-	if ok && pass == d.Config.Server.Token {
-		return true
-	}
-	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -123,7 +102,8 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // --- handlers ------------------------------------------------------------
 
 type handlers struct {
-	d Deps
+	d       Deps
+	limiter *auth.Limiter
 }
 
 func (h *handlers) cloud(w http.ResponseWriter, r *http.Request) {

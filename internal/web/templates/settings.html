@@ -13,7 +13,7 @@
     <tr><th>Sync interval</th><td>{{.Config.Sync.Interval}}</td></tr>
     <tr><th>Gateway address</th><td><code>{{.Config.Server.Address}}</code></td></tr>
     <tr><th>External URL</th><td><code>{{or .Config.Server.ExternalURL "(request host)"}}</code></td></tr>
-    <tr><th>Auth token</th><td>
+    <tr><th>API / stream token</th><td>
       {{if .Config.Server.Token}}
         <span id="authTokenMasked">••••••••</span><code id="authToken" style="display:none">{{.Config.Server.Token}}</code>
         <button type="button" class="ghost" onclick="toggleToken(this)">Show</button>
@@ -27,6 +27,17 @@
   </table>
 </div>
 <div class="card">
+  <h2 style="margin-top:0">Change password</h2>
+  <form id="pwform" class="row" autocomplete="on">
+    <input type="text" name="username" value="{{.User}}" autocomplete="username" hidden>
+    <input type="password" id="pwcur" placeholder="Current password" autocomplete="current-password" required style="flex:1">
+    <input type="password" id="pwnew" placeholder="New password (min 8)" autocomplete="new-password" minlength="8" maxlength="128" required style="flex:1">
+    <input type="password" id="pwconf" placeholder="Confirm new password" autocomplete="new-password" required style="flex:1">
+    <button type="submit">Change</button>
+  </form>
+  <div class="err" id="pwmsg"></div>
+</div>
+<div class="card">
   <h2 style="margin-top:0">Watchlist requests</h2>
   <table id="reqs">
     <thead><tr><th>Source</th><th>Media</th><th>Status</th><th>Detail</th><th>Updated</th></tr></thead>
@@ -34,8 +45,6 @@
   </table>
 </div>
 <script>
-let token = new URLSearchParams(location.search).get("token") || "";
-function q() { return token ? `?token=${token}` : ""; }
 
 function toggleToken(btn) {
   const masked = $("#authTokenMasked"), full = $("#authToken");
@@ -71,23 +80,35 @@ function copyToken() {
   done(ok);
 }
 
+$("#pwform").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const msg = $("#pwmsg");
+  if ($("#pwnew").value !== $("#pwconf").value) { msg.textContent = "New passwords do not match."; return; }
+  try {
+    await api("/api/account/password", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({current: $("#pwcur").value, new: $("#pwnew").value})});
+    ev.target.reset();
+    msg.textContent = "Password changed. Other sessions were logged out.";
+  } catch (e) { msg.textContent = e.message; }
+};
+
 (async () => {
   try {
-    const a = await api("/api/accounts"+q());
+    const a = await api("/api/accounts");
     $("#accts tbody").innerHTML = a.accounts.map(x => `
-      <tr><td>${pill(x.provider,"blue")}</td><td>${x.username||"—"}</td>
+      <tr><td>${pill(x.provider,"blue")}</td><td>${esc(x.username||"—")}</td>
       <td>${x.premium ? pill("until "+(x.premium_until||"").slice(0,10),"ok") : x.error ? "—" : pill("no","warn")}</td>
-      <td>${x.error ? `<span class="err">${x.error}</span>` : pill("ok","ok")}</td></tr>`).join("");
+      <td>${x.error ? `<span class="err">${esc(x.error)}</span>` : pill("ok","ok")}</td></tr>`).join("");
     $("#syncinfo").textContent = "last sync: " + (a.last_sync||"never");
-  } catch (e) { $("#accts tbody").innerHTML = `<tr><td colspan="4" class="err">${e.message}</td></tr>`; }
+  } catch (e) { $("#accts tbody").innerHTML = `<tr><td colspan="4" class="err">${esc(e.message)}</td></tr>`; }
   try {
-    const reqs = await api("/api/requests"+q());
+    const reqs = await api("/api/requests");
     $("#reqs tbody").innerHTML = reqs.length ? reqs.map(r => `
-      <tr><td>${r.Source}</td><td>${r.Title}${r.Season? " S"+r.Season : ""}${r.Episode? "E"+r.Episode : ""}</td>
+      <tr><td>${esc(r.Source)}</td><td>${esc(r.Title)}${r.Season? " S"+esc(r.Season) : ""}${r.Episode? "E"+esc(r.Episode) : ""}</td>
       <td>${pill(r.Status, r.Status==="failed"?"err":r.Status==="added"?"ok":"warn")}</td>
-      <td class="muted">${r.Detail}</td><td class="muted">${r.UpdatedAt}</td></tr>`).join("")
+      <td class="muted">${esc(r.Detail)}</td><td class="muted">${esc(r.UpdatedAt)}</td></tr>`).join("")
       : `<tr><td colspan="5" class="muted">No tracked requests.</td></tr>`;
-  } catch (e) { $("#reqs tbody").innerHTML = `<tr><td colspan="5" class="muted">${e.message}</td></tr>`; }
+  } catch (e) { $("#reqs tbody").innerHTML = `<tr><td colspan="5" class="muted">${esc(e.message)}</td></tr>`; }
 })();
 </script>
 {{template "foot" .}}

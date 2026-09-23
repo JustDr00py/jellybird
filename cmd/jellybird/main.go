@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/debrid"
 	"jellybird/internal/indexers/torrentio"
@@ -75,6 +76,13 @@ func run() error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer st.Close()
+
+	if err := seedAdmin(context.Background(), st, cfg.Server, log); err != nil {
+		return fmt.Errorf("seed admin account: %w", err)
+	}
+	if n, err := st.CountUsers(context.Background()); err == nil && n == 0 {
+		log.Warn("no dashboard account yet: open /setup in a browser to create one")
+	}
 
 	// Providers (base URLs overridable for self-hosted proxies/tests).
 	providers := map[provider.Name]provider.Provider{}
@@ -167,4 +175,35 @@ func run() error {
 		}
 		return err
 	}
+}
+
+// seedAdmin creates the configured admin account, or resets its password if
+// it already exists (lost-password recovery).
+func seedAdmin(ctx context.Context, st *store.Store, srv config.Server, log *slog.Logger) error {
+	if srv.AdminUsername == "" {
+		return nil
+	}
+	hash, err := auth.HashPassword(srv.AdminPassword)
+	if err != nil {
+		return err
+	}
+	u, err := st.GetUserByName(ctx, srv.AdminUsername)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		if _, err := st.CreateUser(ctx, srv.AdminUsername, hash); err != nil {
+			return err
+		}
+		log.Info("dashboard admin account created from config", "user", srv.AdminUsername)
+		return nil
+	case err != nil:
+		return err
+	}
+	if auth.VerifyPassword(u.PasswordHash, srv.AdminPassword) {
+		return nil
+	}
+	if err := st.SetPassword(ctx, u.ID, hash); err != nil {
+		return err
+	}
+	log.Info("dashboard admin password reset from config", "user", u.Username)
+	return nil
 }

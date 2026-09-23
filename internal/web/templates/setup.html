@@ -1,0 +1,21 @@
+{{template "head" .}}
+<div class="card" style="max-width:420px; margin:3rem auto">
+  <h2 style="margin-top:0">Create admin account</h2>
+  <p class="muted">No dashboard account exists yet. Create the one that will sign in to jellybird.</p>
+  <form method="post" action="/setup" autocomplete="on">
+    {{if .NeedsToken}}
+    <p><input type="password" name="token" placeholder="Server token (JELLYBIRD_SERVER_TOKEN)"
+              autocomplete="off" required></p>
+    {{end}}
+    <p><input type="text" name="username" value="{{.Username}}" placeholder="Username (3–32: letters, digits . _ -)"
+              autocomplete="username" autocapitalize="none" spellcheck="false"
+              pattern="[A-Za-z0-9._\-]{3,32}" maxlength="32" required autofocus></p>
+    <p><input type="password" name="password" placeholder="Password (min 8)"
+              autocomplete="new-password" minlength="8" maxlength="128" required></p>
+    <p><input type="password" name="confirm" placeholder="Confirm password"
+              autocomplete="new-password" minlength="8" maxlength="128" required></p>
+    {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+    <button type="submit" style="width:100%">Create account</button>
+  </form>
+</div>
+{{template "foot" .}}

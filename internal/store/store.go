@@ -97,6 +97,20 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (provider, torrent_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_hints_tmdb ON hints(tmdb_id, kind, season, episode)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+			password_hash TEXT NOT NULL,
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS sessions (
+			token_hash TEXT PRIMARY KEY,        -- sha256 of the cookie value
+			user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			created_at INTEGER NOT NULL,
+			expires_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {

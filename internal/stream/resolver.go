@@ -4,6 +4,7 @@ package stream
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,7 @@ func (r *Resolver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if r.token != "" && req.URL.Query().Get("token") != r.token {
+	if r.token != "" && subtle.ConstantTimeCompare([]byte(req.URL.Query().Get("token")), []byte(r.token)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

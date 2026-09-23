@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"jellybird/internal/auth"
 )
 
 // Config is the root configuration for the jellybird service.
@@ -32,8 +34,17 @@ type Server struct {
 	// ExternalURL is the base URL written into .strm files. If empty the
 	// request Host header is used at write time.
 	ExternalURL string `yaml:"external_url"`
-	// Token protects /stream and the web UI. Empty disables auth.
+	// Token protects /stream (embedded in .strm URLs) and lets non-browser
+	// clients such as the Jellyfin plugin call /api via the
+	// X-Jellybird-Token header. The dashboard itself uses username/password
+	// login.
 	Token string `yaml:"token"`
+	// AdminUsername/AdminPassword optionally seed the dashboard account at
+	// startup. If the user exists its password is reset to AdminPassword,
+	// which doubles as lost-password recovery. Leave empty to create the
+	// account through the first-run /setup page instead.
+	AdminUsername string `yaml:"admin_username"`
+	AdminPassword string `yaml:"admin_password"`
 }
 
 // Providers holds per-debrid-service credentials and tuning.
@@ -188,6 +199,8 @@ var envOverrides = []struct {
 	{"JELLYBIRD_SERVER_ADDRESS", func(c *Config, v string) { c.Server.Address = v }},
 	{"JELLYBIRD_SERVER_EXTERNAL_URL", func(c *Config, v string) { c.Server.ExternalURL = v }},
 	{"JELLYBIRD_SERVER_TOKEN", func(c *Config, v string) { c.Server.Token = v }},
+	{"JELLYBIRD_ADMIN_USERNAME", func(c *Config, v string) { c.Server.AdminUsername = v }},
+	{"JELLYBIRD_ADMIN_PASSWORD", func(c *Config, v string) { c.Server.AdminPassword = v }},
 	{"JELLYBIRD_REALDEBRID_API_KEY", func(c *Config, v string) { c.Providers.RealDebrid.APIKey = v }},
 	{"JELLYBIRD_TORBOX_API_KEY", func(c *Config, v string) { c.Providers.TorBox.APIKey = v }},
 	{"JELLYBIRD_LIBRARY_PATH", func(c *Config, v string) { c.Library.Path = v }},
@@ -217,6 +230,16 @@ func (c *Config) Validate() error {
 	}
 	if !c.Providers.RealDebrid.EnabledOrDefault() && !c.Providers.TorBox.EnabledOrDefault() {
 		errs = append(errs, errors.New("at least one provider (realdebrid or torbox) needs an api_key"))
+	}
+	if (c.Server.AdminUsername == "") != (c.Server.AdminPassword == "") {
+		errs = append(errs, errors.New("server.admin_username and server.admin_password must be set together"))
+	} else if c.Server.AdminUsername != "" {
+		if err := auth.ValidateUsername(c.Server.AdminUsername); err != nil {
+			errs = append(errs, fmt.Errorf("server.admin_username: %w", err))
+		}
+		if err := auth.ValidatePassword(c.Server.AdminPassword); err != nil {
+			errs = append(errs, fmt.Errorf("server.admin_password: %w", err))
+		}
 	}
 	if c.Sync.Interval < 30*time.Second {
 		errs = append(errs, errors.New("sync.interval must be at least 30s to respect API rate limits"))

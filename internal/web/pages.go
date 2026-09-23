@@ -28,7 +28,11 @@ var pageFuncs = template.FuncMap{
 }
 
 // render executes a page template, which itself includes the layout blocks.
-func (h *handlers) render(w http.ResponseWriter, status int, page string, data any) {
+// The logged-in username (if any) is injected as .User for the header.
+func (h *handlers) render(w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any) {
+	if u, ok := userFrom(r.Context()); ok {
+		data["User"] = u.Username
+	}
 	t, err := template.New(page).Funcs(pageFuncs).ParseFS(templateFS,
 		"templates/layout.html", "templates/"+page)
 	if err != nil {
@@ -60,7 +64,7 @@ func (h *handlers) index(w http.ResponseWriter, r *http.Request) {
 	if totalPages < 1 {
 		totalPages = 1
 	}
-	h.render(w, http.StatusOK, "index.html", map[string]any{
+	h.render(w, r, http.StatusOK, "index.html", map[string]any{
 		"Files": files, "Total": total,
 		"Page": page, "TotalPages": totalPages,
 		"HasPrev": page > 1, "HasNext": page < totalPages,
@@ -70,17 +74,17 @@ func (h *handlers) index(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) searchPage(w http.ResponseWriter, r *http.Request) {
-	h.render(w, http.StatusOK, "search.html", map[string]any{})
+	h.render(w, r, http.StatusOK, "search.html", map[string]any{})
 }
 
 func (h *handlers) cloudPage(w http.ResponseWriter, r *http.Request) {
-	h.render(w, http.StatusOK, "cloud.html", map[string]any{})
+	h.render(w, r, http.StatusOK, "cloud.html", map[string]any{})
 }
 
 func (h *handlers) settingsPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
-		"Config":  h.d.Config,
+		"Config":  &h.d.Config, // pointer: HasSearch/HasWatchlist have pointer receivers
 		"Version": h.d.Version,
 	}
-	h.render(w, http.StatusOK, "settings.html", data)
+	h.render(w, r, http.StatusOK, "settings.html", data)
 }

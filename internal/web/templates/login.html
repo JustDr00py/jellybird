@@ -1,0 +1,15 @@
+{{template "head" .}}
+<div class="card" style="max-width:380px; margin:3rem auto">
+  <h2 style="margin-top:0">Sign in</h2>
+  <form method="post" action="/login" autocomplete="on">
+    <input type="hidden" name="next" value="{{.Next}}">
+    <p><input type="text" name="username" value="{{.Username}}" placeholder="Username"
+              autocomplete="username" autocapitalize="none" spellcheck="false"
+              maxlength="32" required autofocus></p>
+    <p><input type="password" name="password" placeholder="Password"
+              autocomplete="current-password" maxlength="128" required></p>
+    {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+    <button type="submit" style="width:100%">Sign in</button>
+  </form>
+</div>
+{{template "foot" .}}

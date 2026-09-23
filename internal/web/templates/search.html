@@ -17,18 +17,18 @@
 </dialog>
 
 <script>
-let token = new URLSearchParams(location.search).get("token") || "";
-function q(extra="") { return token ? `?token=${token}${extra ? "&"+extra : ""}` : (extra ? "?"+extra : ""); }
+// q builds a URL-encoded query string from an object.
+function q(params={}) { const s = new URLSearchParams(params).toString(); return s ? "?"+s : ""; }
 
 $("#searchbtn").onclick = doSearch;
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
 
 async function checkExists(type, tmdbID, season, episode) {
   try {
-    let extra = `type=${type}&tmdb_id=${tmdbID}`;
-    if (season !== undefined) extra += `&season=${season}`;
-    if (episode !== undefined) extra += `&episode=${episode}`;
-    const res = await api(`/api/library/check${q(extra)}`);
+    const params = {type, tmdb_id: tmdbID};
+    if (season !== undefined) params.season = season;
+    if (episode !== undefined) params.episode = episode;
+    const res = await api(`/api/library/check${q(params)}`);
     return !!res.exists;
   } catch {
     return false; // best-effort label; a failed check just means no badge
@@ -42,19 +42,19 @@ async function doSearch() {
   try {
     // API fields are lowercase: id, title, name, media_type, poster_path,
     // release_date (movies) / first_air_date (tv).
-    const results = await api("/api/search" + q("q=") + encodeURIComponent(query));
+    const results = await api("/api/search" + q({q: query}));
     if (!results.length) { $("#err").textContent = "No results."; return; }
     for (const r of results) {
       const title = r.title || r.name || r.original_title || r.original_name || "Unknown";
       const year = (r.first_air_date || r.release_date || "").slice(0, 4);
       const poster = r.poster_path
-        ? `<img src="https://image.tmdb.org/t/p/w300${r.poster_path}" alt="">`
+        ? `<img src="https://image.tmdb.org/t/p/w300${esc(r.poster_path)}" alt="">`
         : `<div style="aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;font-size:2.5rem">🎬</div>`;
       const el = document.createElement("div");
       el.className = "media";
       el.innerHTML = `
         ${poster}
-        <div class="t">${title}${year ? " ("+year+")" : ""}</div>
+        <div class="t">${esc(title)}${year ? " ("+esc(year)+")" : ""}</div>
         <div class="muted">${r.media_type === "tv" ? "TV series" : "Movie"}</div>`;
       el.onclick = () => openStreams(r, title);
       $("#results").appendChild(el);
@@ -89,38 +89,38 @@ async function openStreams(r, title) {
 async function showSeasons(tmdbID, title) {
   $("#dlg-body").innerHTML = `<p class="muted">Loading seasons…</p>`;
   try {
-    const seasons = await api(`/api/tv/seasons${q(`tmdb_id=${tmdbID}`)}`);
+    const seasons = await api(`/api/tv/seasons${q({tmdb_id: tmdbID})}`);
     if (!seasons.length) { $("#dlg-body").innerHTML = `<p class="muted">No seasons found.</p>`; return; }
     $("#dlg-body").innerHTML = `<div class="grid">${seasons.map(s => `
-      <div class="media" data-season="${s.season_number}">
+      <div class="media" data-season="${esc(s.season_number)}">
         ${s.poster_path
-          ? `<img src="https://image.tmdb.org/t/p/w300${s.poster_path}" alt="">`
+          ? `<img src="https://image.tmdb.org/t/p/w300${esc(s.poster_path)}" alt="">`
           : `<div style="aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;font-size:2.5rem">📺</div>`}
-        <div class="t">${s.name || "Season " + s.season_number}</div>
-        <div class="muted">${s.episode_count} episodes</div>
+        <div class="t">${esc(s.name || "Season " + s.season_number)}</div>
+        <div class="muted">${esc(s.episode_count)} episodes</div>
       </div>`).join("")}</div>`;
     $$("#dlg-body [data-season]").forEach(el => {
       const season = seasons.find(s => s.season_number === +el.dataset.season);
       el.onclick = () => showEpisodes(tmdbID, title, season);
     });
-  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${e.message}</p>`; }
+  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
 async function showEpisodes(tmdbID, title, season) {
   $("#dlg-body").innerHTML = `<p class="muted">Loading episodes…</p>`;
   try {
-    const episodes = await api(`/api/tv/episodes${q(`tmdb_id=${tmdbID}&season=${season.season_number}`)}`);
+    const episodes = await api(`/api/tv/episodes${q({tmdb_id: tmdbID, season: season.season_number})}`);
     const back = `<button class="ghost" id="backtoseasons">‹ Seasons</button>`;
     if (!episodes.length) { $("#dlg-body").innerHTML = `${back}<p class="muted">No episodes found.</p>`; return; }
     const rows = episodes.map(e => `
-      <tr class="ep" data-ep="${e.episode_number}" style="cursor:pointer">
-        <td>${e.episode_number}</td>
-        <td>${e.name || "Episode " + e.episode_number}</td>
-        <td class="muted">${e.air_date || ""}</td>
+      <tr class="ep" data-ep="${esc(e.episode_number)}" style="cursor:pointer">
+        <td>${esc(e.episode_number)}</td>
+        <td>${esc(e.name || "Episode " + e.episode_number)}</td>
+        <td class="muted">${esc(e.air_date)}</td>
       </tr>`).join("");
     $("#dlg-body").innerHTML = `
       <div class="row" style="justify-content:space-between; margin-bottom:.6rem">
-        ${back}<strong>${season.name || "Season " + season.season_number}</strong>
+        ${back}<strong>${esc(season.name || "Season " + season.season_number)}</strong>
       </div>
       <table><thead><tr><th>#</th><th>Episode</th><th>Aired</th></tr></thead>
       <tbody>${rows}</tbody></table>`;
@@ -131,25 +131,25 @@ async function showEpisodes(tmdbID, title, season) {
     episodes.forEach(e => {
       checkExists("tv", tmdbID, season.season_number, e.episode_number).then(exists => {
         if (!exists) return;
-        const tr = $(`#dlg-body tr.ep[data-ep="${e.episode_number}"]`);
+        const tr = $(`#dlg-body tr.ep[data-ep="${CSS.escape(String(e.episode_number))}"]`);
         if (tr) tr.cells[1].innerHTML += " " + pill("in library", "ok");
       });
     });
-  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${e.message}</p>`; }
+  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
 async function loadTorrents(mediaType, tmdbID, title, year, season, episode) {
   $("#dlg-body").innerHTML = `<p class="muted">Searching indexers & debrid caches…</p>`;
   try {
     // Fields: title, size_bytes, seeders, source, provider, hash, cached.
-    const streams = await api(`/api/torrents${q(`type=${mediaType}&tmdb_id=${tmdbID}&season=${season}&episode=${episode}`)}`);
+    const streams = await api(`/api/torrents${q({type: mediaType, tmdb_id: tmdbID, season, episode})}`);
     if (!streams.length) { $("#dlg-body").innerHTML = `<p class="muted">No torrents found.</p>`; return; }
     const rows = streams.slice(0, 50).map((s, i) => `
       <tr>
         <td>${i+1}</td>
-        <td>${s.title}</td>
-        <td class="muted">${fmtSize(s.size_bytes)}</td>
-        <td class="muted">${s.seeders} seed</td>
+        <td>${esc(s.title)}</td>
+        <td class="muted">${esc(fmtSize(s.size_bytes))}</td>
+        <td class="muted">${esc(s.seeders)} seed</td>
         <td>${s.cached ? pill(s.provider || "cached","ok") : pill("not cached","warn")}</td>
         <td><button class="streambtn" data-i="${i}">Add</button></td>
       </tr>`).join("");
@@ -162,7 +162,7 @@ async function loadTorrents(mediaType, tmdbID, title, year, season, episode) {
         const s = streams[+btn.dataset.i];
         btn.disabled = true; btn.textContent = "…";
         try {
-          const res = await api("/api/add"+q(), {method:"POST", headers:{"Content-Type":"application/json"},
+          const res = await api("/api/add", {method:"POST", headers:{"Content-Type":"application/json"},
             body: JSON.stringify({
               magnet: s.magnet, info_hash: s.hash, provider: s.provider,
               title, media_type: mediaType, year: year ? +year : 0,
@@ -173,14 +173,14 @@ async function loadTorrents(mediaType, tmdbID, title, year, season, episode) {
           btn.textContent = "✓ added";
           if (res.cached && res.synced) {
             btn.textContent = "✓ added (cached)";
-            setTimeout(()=>{dlg.close(); location.href = "/"+q(); }, 1200);
+            setTimeout(()=>{dlg.close(); location.href = "/"; }, 1200);
           } else if (res.cached) {
             btn.textContent = "✓ added — sync pending";
           }
         } catch (e) { btn.textContent = "retry"; alert(e.message); btn.disabled = false; }
       };
     });
-  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${e.message}</p>`; }
+  } catch (e) { $("#dlg-body").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 </script>
 {{template "foot" .}}

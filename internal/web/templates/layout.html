@@ -20,7 +20,7 @@
           padding:1rem 1.2rem; margin-bottom:1rem; }
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:1rem; }
   input, select, button { font:inherit; }
-  input[type=text], input[type=search] { background:#0f1115; color:#e2e6ee;
+  input[type=text], input[type=search], input[type=password] { background:#0f1115; color:#e2e6ee;
       border:1px solid #2c3446; border-radius:8px; padding:.55rem .8rem; width:100%; }
   button { background:#2b5fd9; color:#fff; border:0; border-radius:8px;
            padding:.55rem 1.1rem; cursor:pointer; }
@@ -61,6 +61,7 @@
 <body>
 <header>
   <h1>🐦 jellybird</h1>
+  {{if .User}}
   <nav>
     <a href="/" data-page="home">Library</a>
     <a href="/search" data-page="search">Search &amp; Add</a>
@@ -68,17 +69,32 @@
     <a href="/settings" data-page="settings">Settings</a>
   </nav>
   <span class="muted" style="margin-left:auto" id="syncinfo"></span>
+  <form method="post" action="/logout" class="row" style="gap:.5rem">
+    <span class="muted">{{.User}}</span>
+    <button type="submit" class="ghost">Log out</button>
+  </form>
+  {{end}}
 </header>
 <main>
 <script>
 const $ = (s, el=document) => el.querySelector(s);
 const $$ = (s, el=document) => [...el.querySelectorAll(s)];
+// esc HTML-escapes a value before it is interpolated into innerHTML.
+// Torrent names, TMDB titles, provider errors etc. are untrusted input:
+// ALWAYS wrap them in esc() inside template literals.
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"'`]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","`":"&#96;"}[c]));
+}
 async function api(path, opts) {
-  const r = await fetch(path, opts);
+  const r = await fetch(path, Object.assign({credentials: "same-origin"}, opts));
+  if (r.status === 401) {
+    location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
+    throw new Error("session expired");
+  }
   if (!r.ok) throw new Error((await r.json().catch(()=>({}))).error || r.statusText);
   return r.json();
 }
-function pill(text, cls) { return `<span class="pill ${cls}">${text}</span>`; }
+function pill(text, cls) { return `<span class="pill ${esc(cls)}">${esc(text)}</span>`; }
 function fmtSize(n) {
   if (!n) return "—";
   const u = ["B","KB","MB","GB","TB"]; let i = 0;

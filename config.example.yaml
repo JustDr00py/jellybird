@@ -8,10 +8,18 @@ server:
   # server runs in Docker or on another host, e.g. "http://jellybird:8097"
   # or "http://192.168.1.50:8097". Empty uses http://127.0.0.1:<address>.
   external_url: ""
-  # Shared secret protecting /stream, /api and the dashboard.
-  # Media servers send it via the query string embedded in the .strm files.
+  # Shared secret protecting /stream and machine access to /api.
+  # Media servers send it via the query string embedded in the .strm files;
+  # the Jellybird Jellyfin plugin sends it as the X-Jellybird-Token header.
+  # If set, it is also required to claim the first account at /setup.
   # env: JELLYBIRD_SERVER_TOKEN
   token: ""
+  # The dashboard uses username/password login. Leave these empty and open
+  # /setup on first run, or set both to create the account at startup.
+  # Setting them later resets that user's password (lost-password recovery).
+  # env: JELLYBIRD_ADMIN_USERNAME / JELLYBIRD_ADMIN_PASSWORD
+  admin_username: ""
+  admin_password: ""
 
 providers:
   realdebrid:

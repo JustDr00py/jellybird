@@ -94,7 +94,8 @@ Highlights:
 | `providers.realdebrid.api_key` / `providers.torbox.api_key` | debrid credentials (either or both) |
 | `library.path` | STRM tree root — your server scans this |
 | `server.external_url` | URL baked into `.strm` files |
-| `server.token` | optional shared secret for streaming + dashboard |
+| `server.token` | shared secret for `/stream` links and the Jellyfin plugin's API calls |
+| `server.admin_username` / `server.admin_password` | optional: seed (or reset) the dashboard login |
 | `sync.interval` | cloud polling cadence (min 30s) |
 | `tmdb.api_key` | enables the search UI (free key) |
 | `watchlist.*` | Jellyseerr auto-download |
@@ -103,7 +104,24 @@ Environment overrides: `JELLYBIRD_<SECTION>_<KEY>` — e.g.
 `JELLYBIRD_REALDEBRID_API_KEY`, `JELLYBIRD_TORBOX_API_KEY`,
 `JELLYBIRD_TMDB_API_KEY`, `JELLYBIRD_JELLYSEERR_URL`,
 `JELLYBIRD_JELLYSEERR_API_KEY`, `JELLYBIRD_LIBRARY_PATH`,
-`JELLYBIRD_SERVER_TOKEN`, `JELLYBIRD_DATABASE_PATH`.
+`JELLYBIRD_SERVER_TOKEN`, `JELLYBIRD_ADMIN_USERNAME`,
+`JELLYBIRD_ADMIN_PASSWORD`, `JELLYBIRD_DATABASE_PATH`.
+
+### Dashboard login
+
+The dashboard uses username/password sign-in with server-side sessions
+(HttpOnly cookie, 30 days). On first run, open `http://<host>:8097/setup`
+to create the admin account — if `server.token` is set, the setup form asks
+for it so nobody else on the network can claim the account first. Or set
+`JELLYBIRD_ADMIN_USERNAME` / `JELLYBIRD_ADMIN_PASSWORD` to create it at
+startup; restarting with a new `JELLYBIRD_ADMIN_PASSWORD` resets a forgotten
+password. Passwords are stored as PBKDF2-SHA256 hashes, and failed logins
+are rate-limited (5 per 15 minutes per IP and per username).
+
+`/api/*` accepts either a dashboard session or the server token in the
+`X-Jellybird-Token` header, which is what the Jellybird Jellyfin plugin
+uses. `/stream/*` keeps the `?token=` query parameter embedded in `.strm`
+files.
 
 ## API
 

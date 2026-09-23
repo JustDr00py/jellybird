@@ -48,8 +48,6 @@
   <div class="err" id="err"></div>
 </div>
 <script>
-let token = new URLSearchParams(location.search).get("token") || "";
-function q() { return token ? `?token=${token}` : ""; }
 const statusPill = s => s === "ready" ? pill(s,"ok") : s === "error" ? pill(s,"err") : pill(s,"warn");
 
 const PAGE_SIZE = 150;
@@ -75,10 +73,10 @@ function renderPage() {
   cloudPage = Math.min(cloudPage, totalPages - 1);
   const slice = filtered.slice(cloudPage * PAGE_SIZE, (cloudPage + 1) * PAGE_SIZE);
   tbody.innerHTML = slice.length ? slice.map(t => `
-    <tr><td>${t.name}</td><td>${pill(t.provider,"blue")}</td>
-    <td>${statusPill(t.status)}</td><td class="muted">${t.files}</td>
-    <td class="muted">${fmtSize(t.size)}</td>
-    <td><button class="ghost removebtn" data-provider="${t.provider}" data-id="${t.id}">Remove</button></td></tr>`).join("")
+    <tr><td>${esc(t.name)}</td><td>${pill(t.provider,"blue")}</td>
+    <td>${statusPill(t.status)}</td><td class="muted">${esc(t.files)}</td>
+    <td class="muted">${esc(fmtSize(t.size))}</td>
+    <td><button class="ghost removebtn" data-provider="${esc(t.provider)}" data-id="${esc(t.id)}">Remove</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="muted">No matches.</td></tr>`;
   $("#cloudpageinfo").textContent = `Page ${cloudPage + 1} of ${totalPages} (${filtered.length} of ${cloudData.length} total)`;
   $("#cloudprev").disabled = cloudPage === 0;
@@ -88,8 +86,8 @@ function renderPage() {
       if (!confirm("Remove this from your debrid cloud? This deletes it there and removes its STRM file.")) return;
       btn.disabled = true; btn.textContent = "…";
       try {
-        const extra = `provider=${btn.dataset.provider}&id=${encodeURIComponent(btn.dataset.id)}`;
-        await api("/api/cloud" + (token ? `?token=${token}&${extra}` : `?${extra}`), {method:"DELETE"});
+        const params = new URLSearchParams({provider: btn.dataset.provider, id: btn.dataset.id});
+        await api("/api/cloud?" + params, {method:"DELETE"});
         load();
       } catch (e) { $("#err").textContent = e.message; btn.disabled = false; btn.textContent = "Remove"; }
     };
@@ -101,9 +99,9 @@ async function load() {
   if (loading) return; // skip: previous fetch still in flight (slow cold cache, etc.)
   loading = true;
   try {
-    cloudData = await api("/api/cloud"+q());
+    cloudData = await api("/api/cloud");
     renderPage();
-  } catch (e) { $("#cloudtbl tbody").innerHTML = `<tr><td colspan="6" class="err">${e.message}</td></tr>`; }
+  } catch (e) { $("#cloudtbl tbody").innerHTML = `<tr><td colspan="6" class="err">${esc(e.message)}</td></tr>`; }
   loading = false;
 }
 load(); setInterval(load, 15000);
@@ -131,7 +129,7 @@ $("#addmagnet").onclick = async () => {
   }
   $("#err").textContent = ""; $("#addmagnet").disabled = true;
   try {
-    const res = await api("/api/add"+q(), {method:"POST", headers:{"Content-Type":"application/json"},
+    const res = await api("/api/add", {method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify(body)});
     $("#magnet").value = ""; $("#ntitle").value = ""; $("#nyear").value = ""; $("#nseason").value = ""; $("#nepisode").value = "";
     $("#err").textContent = res.cached ? "Added and cached — STRM written." : "Added — it will appear after the download completes.";
