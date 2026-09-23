@@ -23,6 +23,46 @@ import (
 // multi-movie box sets and season-pack episodes normally clear it.
 const extrasSizeRatio = 0.3
 
+// extrasDirs are folder names (normalized: lowercase, separators as spaces)
+// that releases and Jellyfin's own conventions use for bonus material. A
+// video anywhere under one of these is never a main feature, however large
+// — a feature-length storyboard or making-of can easily clear
+// extrasSizeRatio. "Specials" is deliberately absent: it's TV season 0.
+var extrasDirs = map[string]bool{
+	"extras": true, "extra": true, "bonus": true, "bonus features": true, "bonus material": true,
+	"featurettes": true, "featurette": true, "behind the scenes": true, "making of": true,
+	"deleted scenes": true, "interviews": true, "scenes": true, "shorts": true,
+	"trailers": true, "trailer": true, "samples": true, "sample": true,
+}
+
+// extrasSuffixes are Jellyfin's "<name>-<type>" extras file-name suffixes.
+var extrasSuffixes = []string{
+	"-trailer", "-sample", "-featurette", "-behindthescenes", "-deleted",
+	"-deletedscene", "-interview", "-scene", "-short", "-extra",
+}
+
+// isExtra reports whether a file inside a torrent is bonus material by its
+// folder or file name.
+func isExtra(path string) bool {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	norm := strings.NewReplacer(".", " ", "_", " ", "-", " ")
+	for _, dir := range parts[:len(parts)-1] {
+		if extrasDirs[strings.Join(strings.Fields(norm.Replace(strings.ToLower(dir))), " ")] {
+			return true
+		}
+	}
+	stem := strings.ToLower(strings.TrimSuffix(parts[len(parts)-1], filepath.Ext(path)))
+	if stem == "sample" {
+		return true
+	}
+	for _, suf := range extrasSuffixes {
+		if strings.HasSuffix(stem, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // Writer manages the on-disk STRM tree and its database mapping.
 type Writer struct {
 	cfg   config.Library
@@ -58,6 +98,9 @@ func (w *Writer) StreamURL(p provider.Name, torrentID, fileID string) string {
 
 // isVideo reports whether a file should become a STRM entry.
 func (w *Writer) isVideo(path string, size int64) bool {
+	if isExtra(path) {
+		return false
+	}
 	ext := strings.ToLower(filepath.Ext(path))
 	allowed := false
 	for _, okExt := range w.sync.VideoExtensions {

@@ -170,6 +170,58 @@ func TestSyncProviderPrunesDeleted(t *testing.T) {
 	}
 }
 
+// Regression: "The Boy and the Heron" ships a 2.3GB "Featurettes/Feature-
+// Length Storyboards.mkv" next to the 6.9GB film — 33% of the main file, so
+// it cleared extrasSizeRatio and was filed as its own movie.
+func TestSyncSkipsExtrasFolders(t *testing.T) {
+	w, st, libPath := testWriter(t)
+	ctx := context.Background()
+	torrents := []provider.Torrent{{
+		ID: "T1", Name: "The Boy and the Heron (2023) (1080p BluRay x265 HEVC 10bit EAC3 7.1 Japanese Garshasp)",
+		Status: provider.StatusReady,
+		Files: []provider.File{
+			{ID: "3", Path: "Featurettes/Feature-Length Storyboards.mkv", SizeBytes: 2_287_612_862},
+			{ID: "4", Path: "Extras/Behind.The.Scenes.mkv", SizeBytes: 3_000_000_000},
+			{ID: "5", Path: "The Boy and the Heron-trailer.mkv", SizeBytes: 3_000_000_000},
+			{ID: "8", Path: "The Boy and the Heron (2023) (1080p BluRay x265 Garshasp).mkv", SizeBytes: 6_865_139_884},
+		},
+	}}
+	res, err := w.SyncProvider(ctx, provider.RealDebrid, torrents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created != 1 {
+		t.Fatalf("created = %d, want 1 (only the film)", res.Created)
+	}
+	files, _ := st.ListFiles(ctx, "")
+	if len(files) != 1 || files[0].FileID != "8" {
+		t.Fatalf("tracked = %+v, want only file 8", files)
+	}
+	if _, err := os.Stat(filepath.Join(libPath, "Movies", "Feature-Length Storyboards")); !os.IsNotExist(err) {
+		t.Errorf("storyboards folder should not exist, stat err = %v", err)
+	}
+}
+
+func TestIsExtra(t *testing.T) {
+	for path, want := range map[string]bool{
+		"Featurettes/Feature-Length Storyboards.mkv": true,
+		"Movie (2020)/Behind_The_Scenes/making.mkv":  true,
+		"Extras/x.mkv":                        true,
+		"Deleted.Scenes/cut.mkv":              true,
+		"Movie-trailer.mkv":                   true,
+		"sample.mkv":                          true,
+		"Show/Specials/Show S00E01.mkv":       false,
+		"Show/Season 01/Show S01E01.mkv":      false,
+		"Short Circuit (1986).mkv":            false,
+		"The.Making.of.a.Murderer.S01E01.mkv": false,
+		"Dune.Part.Two.2024.1080p.mkv":        false,
+	} {
+		if got := isExtra(path); got != want {
+			t.Errorf("isExtra(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
 func TestSizeFilterSkipsSamples(t *testing.T) {
 	w, st, _ := testWriter(t)
 	w.sync.MinFileMB = 50 // 50MB floor
@@ -399,7 +451,7 @@ func TestGroupTag(t *testing.T) {
 		"Moana.2016.1080p.BluRay.DDP.7.1.x265-EDGE2020.mkv":    "EDGE2020",
 		"Tulsa King (2022) - S01E01 - Go West, Old Man.mkv":    "", // episode title, not a group
 		"[SubsPlease] Sousou no Frieren S2 - 04 (1080p).mkv":   "",
-		"Movie.2020.mkv":                                        "",
+		"Movie.2020.mkv": "",
 	}
 	for in, want := range cases {
 		if got := groupTag(in); got != want {
