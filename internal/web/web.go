@@ -15,6 +15,7 @@ import (
 	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/debrid"
+	"jellybird/internal/download"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
 	"jellybird/internal/stream"
@@ -29,6 +30,7 @@ type Deps struct {
 	Store     *store.Store
 	Engine    *debrid.Engine
 	Resolver  *stream.Resolver
+	Downloads *download.Manager
 	Log       *slog.Logger
 	Version   string
 	SyncFlash chan struct{}
@@ -80,6 +82,10 @@ func Mount(r chi.Router, d Deps) {
 			api.Get("/requests", h.requests)
 			api.Get("/accounts", h.accounts)
 			api.Post("/account/password", h.changePassword)
+			api.Get("/local", h.localList)
+			api.Post("/local", h.localAdd)
+			api.Delete("/local", h.localRemove)
+			api.Get("/download/{provider}/{torrentID}/{fileID}", h.downloadFile)
 		})
 
 		// Dashboard.

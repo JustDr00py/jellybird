@@ -111,6 +111,22 @@ func (s *Store) migrate() error {
 			expires_at INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE TABLE IF NOT EXISTS local_files (
+			provider     TEXT NOT NULL,
+			torrent_id   TEXT NOT NULL,
+			file_id      TEXT NOT NULL,
+			torrent_name TEXT NOT NULL,
+			file_path    TEXT NOT NULL,
+			size_bytes   INTEGER NOT NULL DEFAULT 0,
+			bytes_done   INTEGER NOT NULL DEFAULT 0,
+			status       TEXT NOT NULL,             -- queued|downloading|done|failed
+			local_path   TEXT NOT NULL DEFAULT '',  -- set once done
+			error        TEXT NOT NULL DEFAULT '',
+			created_at   INTEGER NOT NULL,
+			updated_at   INTEGER NOT NULL,
+			PRIMARY KEY (provider, torrent_id, file_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_local_status ON local_files(status, created_at)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {

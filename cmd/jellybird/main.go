@@ -19,6 +19,7 @@ import (
 	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/debrid"
+	"jellybird/internal/download"
 	"jellybird/internal/indexers/torrentio"
 	"jellybird/internal/metadata/tmdb"
 	"jellybird/internal/provider"
@@ -133,6 +134,10 @@ func run() error {
 	syncDone := make(chan struct{}, 1)
 	go engine.RunSyncLoop(ctx, cfg.Sync, syncDone)
 
+	// "Keep local" download queue.
+	downloads := download.New(st, writer, resolver, cfg.Downloads, log)
+	go downloads.Run(ctx)
+
 	// Watchlist loop.
 	if cfg.HasWatchlist() {
 		wl := watchlist.New(cfg.Watchlist, engine, st, log)
@@ -147,6 +152,7 @@ func run() error {
 		Store:     st,
 		Engine:    engine,
 		Resolver:  resolver,
+		Downloads: downloads,
 		Log:       log,
 		Version:   version,
 		SyncFlash: syncDone,

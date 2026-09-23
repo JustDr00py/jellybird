@@ -4,6 +4,14 @@
   <button class="ghost" id="wipebtn">Wipe library</button>
   <span class="muted" id="syncmsg"></span>
 </div>
+<div class="card" id="dlcard" hidden>
+  <h2 style="margin-top:0">Local copies</h2>
+  <p class="muted" style="margin-top:0">Files downloaded to the server so they play without the debrid service. Jellyfin picks them up on its next library scan.</p>
+  <table id="dltbl">
+    <thead><tr><th>File</th><th>Status</th><th>Size</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
 <div class="card">
   <h2 style="margin-top:0">Library ({{.Total}} files)</h2>
   <form class="row" method="get" style="margin-bottom:1rem">
@@ -16,23 +24,26 @@
     <button type="submit">Filter</button>
     {{if or .Query .Provider}}<a href="/"><button type="button" class="ghost">Clear</button></a>{{end}}
   </form>
+  <div style="overflow-x:auto">
   <table>
-    <thead><tr><th>Title</th><th>File</th><th>Provider</th><th>Size</th><th>STRM</th><th></th></tr></thead>
+    <thead><tr><th>Title / file</th><th>Provider</th><th>Size</th><th>STRM</th><th>Local</th><th></th></tr></thead>
     <tbody>
     {{range .Files}}
       <tr>
-        <td class="trunc" title="{{.TorrentName}}">{{.TorrentName}}</td>
-        <td class="muted trunc" title="{{.FilePath}}">{{.FilePath}}</td>
+        <td class="trunc" style="max-width:260px"><div class="trunc" style="max-width:260px" title="{{.TorrentName}}">{{.TorrentName}}</div>
+          <div class="muted trunc" style="max-width:260px; font-size:.8rem" title="{{.FilePath}}">{{.FilePath}}</div></td>
         <td>{{pill .Provider "blue"}}</td>
-        <td class="muted">{{fmtSize .SizeBytes}}</td>
-        <td class="trunc"><code title="{{.StrmPath}}">{{base .StrmPath}}</code></td>
-        <td><button class="ghost editbtn" data-provider="{{.Provider}}" data-torrent-id="{{.TorrentID}}" data-name="{{.TorrentName}}">Edit</button></td>
+        <td class="muted" style="white-space:nowrap">{{fmtSize .SizeBytes}}</td>
+        <td class="trunc" style="max-width:150px"><code title="{{.StrmPath}}">{{base .StrmPath}}</code></td>
+        <td class="localcell" data-provider="{{.Provider}}" data-torrent-id="{{.TorrentID}}" data-file-id="{{.FileID}}"></td>
+        <td class="actions"><button class="ghost sm editbtn" data-provider="{{.Provider}}" data-torrent-id="{{.TorrentID}}" data-name="{{.TorrentName}}">Edit</button></td>
       </tr>
     {{else}}
       <tr><td colspan="6" class="muted">No STRM files yet — add content in Search &amp; Add or wait for the next sync.</td></tr>
     {{end}}
     </tbody>
   </table>
+  </div>
   <div class="row" style="justify-content:center; margin-top:1rem">
     {{if .HasPrev}}<a href="?page={{.PrevPage}}&q={{.Query}}&provider={{.Provider}}"><button class="ghost">‹ Prev</button></a>{{end}}
     <span class="muted">Page {{.Page}} of {{.TotalPages}}</span>
@@ -95,6 +106,83 @@ $("#renamesave").onclick = async () => {
   } catch (e) { $("#renameerr").textContent = e.message; }
   $("#renamesave").disabled = false;
 };
+</script>
+
+<script>
+// --- local copies ("keep local" + save to device) -------------------------
+const lkey = (p, t, f) => `${p}/${t}/${f}`;
+const localQS = (p, t, f) => new URLSearchParams({provider: p, torrent_id: t, file_id: f});
+const saveURL = (p, t, f) => `/api/download/${encodeURIComponent(p)}/${encodeURIComponent(t)}/${encodeURIComponent(f)}`;
+
+function localStatus(lf) {
+  if (!lf) return "";
+  switch (lf.status) {
+    case "done": return pill("local ✓", "ok");
+    case "queued": return pill("queued", "blue");
+    case "downloading": {
+      const pct = lf.size_bytes ? Math.floor(lf.bytes_done * 100 / lf.size_bytes) : 0;
+      return pill(`${pct}%`, "warn");
+    }
+    case "failed": return `<span title="${esc(lf.error)}">${pill("failed", "err")}</span>`;
+  }
+  return "";
+}
+
+function localActions(p, t, f, lf) {
+  const d = `data-provider="${esc(p)}" data-torrent-id="${esc(t)}" data-file-id="${esc(f)}"`;
+  const save = `<a class="ghostlink sm" href="${esc(saveURL(p, t, f))}" title="Download this file to this device">Save</a>`;
+  if (!lf) return `<button class="ghost sm localadd" ${d} title="Download to the server for offline playback">Keep local</button> ${save}`;
+  if (lf.status === "failed") return `<button class="ghost sm localadd" ${d}>Retry</button> <button class="ghost sm localrm" ${d} title="Forget">✕</button>`;
+  if (lf.status === "done") return `<button class="ghost sm localrm" ${d} data-confirm="1" title="Delete the local file; the title goes back to streaming">Remove local</button> ${save}`;
+  return `<button class="ghost sm localrm" ${d} title="Cancel download">Cancel</button>`;
+}
+
+function wireLocalButtons(root) {
+  $$("button.localadd", root).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api("/api/local", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({provider: b.dataset.provider, torrent_id: b.dataset.torrentId, file_id: b.dataset.fileId})});
+    } catch (e) { alert(e.message); }
+    loadLocal();
+  });
+  $$("button.localrm", root).forEach(b => b.onclick = async () => {
+    if (b.dataset.confirm && !confirm("Delete the local copy from the server? If it's still in your debrid cloud it goes back to streaming.")) return;
+    b.disabled = true;
+    try { await api("/api/local?" + localQS(b.dataset.provider, b.dataset.torrentId, b.dataset.fileId), {method:"DELETE"}); }
+    catch (e) { alert(e.message); }
+    loadLocal();
+  });
+}
+
+let localTimer = null;
+async function loadLocal() {
+  clearTimeout(localTimer);
+  let list = [];
+  try { list = await api("/api/local"); } catch { localTimer = setTimeout(loadLocal, 15000); return; }
+  const byKey = new Map(list.map(lf => [lkey(lf.provider, lf.torrent_id, lf.file_id), lf]));
+
+  $$("td.localcell").forEach(td => {
+    const {provider: p, torrentId: t, fileId: f} = td.dataset;
+    const lf = byKey.get(lkey(p, t, f));
+    td.innerHTML = `${localStatus(lf)} ${localActions(p, t, f, lf)}`;
+  });
+
+  $("#dlcard").hidden = list.length === 0;
+  $("#dltbl tbody").innerHTML = list.map(lf => {
+    const name = (lf.local_path || lf.file_path).split("/").pop();
+    const where = lf.in_library ? "" : " " + pill("only copy — gone from cloud", "blue");
+    return `<tr><td class="trunc" title="${esc(lf.torrent_name)}">${esc(name)}${where}</td>
+      <td>${localStatus(lf)}${lf.status === "failed" ? ` <span class="muted">${esc(lf.error)}</span>` : ""}</td>
+      <td class="muted">${esc(fmtSize(lf.size_bytes))}</td>
+      <td>${localActions(lf.provider, lf.torrent_id, lf.file_id, lf)}</td></tr>`;
+  }).join("");
+
+  wireLocalButtons(document);
+  const active = list.some(lf => lf.status === "queued" || lf.status === "downloading");
+  localTimer = setTimeout(loadLocal, active ? 3000 : 20000);
+}
+loadLocal();
 </script>
 
 <script>

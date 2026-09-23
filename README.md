@@ -123,6 +123,33 @@ are rate-limited (5 per 15 minutes per IP and per username).
 uses. `/stream/*` keeps the `?token=` query parameter embedded in `.strm`
 files.
 
+## Offline copies
+
+Everything jellybird adds is streamed from your debrid service by default.
+To keep something playable without it — an internet outage, a lapsed
+subscription, a torrent that gets removed — use **Keep local** on the
+Library page (per file) or the Cloud page (a whole torrent, e.g. a season).
+
+jellybird downloads the file into `<library>/.jellybird-downloads/` (outside
+the folders Jellyfin scans), then moves it into place next to where the
+`.strm` was — `Dune Part Two (2024).strm` becomes `Dune Part Two (2024).mkv`
+— and deletes the `.strm`. Jellyfin picks up the real file on its next
+library scan and can direct-play or transcode it like any local media.
+
+- Downloads resume after restarts and dropped connections, refresh expired
+  debrid links, verify the final size and refuse to start when the disk
+  would drop below `downloads.min_free_gb`.
+- Local copies are never deleted by sync: if the title leaves your debrid
+  cloud, its local copy stays (flagged "only copy") until you remove it.
+- **Remove local** deletes the file and, if the title is still in your
+  cloud, puts the `.strm` back.
+- **Save** downloads a file to the device you're browsing from. It's
+  proxied through jellybird so the debrid service only ever sees the
+  server's IP (Real-Debrid can flag accounts used from several IPs).
+
+Debrid services have fair-use limits on bandwidth; downloading whole
+libraries may get throttled.
+
 ## API
 
 | Endpoint | Purpose |
@@ -135,6 +162,10 @@ files.
 | `GET /api/torrents?type=&tmdb_id=&season=&episode=` | cached-annotated torrents |
 | `POST /api/add` `{magnet, info_hash, provider}` | add a magnet |
 | `GET /api/requests` | watchlist pipeline state |
+| `GET /api/local` | "keep local" copies and download progress |
+| `POST /api/local` `{provider, torrent_id, file_id?}` | download a file (or a whole torrent) onto the server; retries failed ones |
+| `DELETE /api/local?provider=&torrent_id=&file_id=` | cancel a download / delete a local copy (the title goes back to streaming) |
+| `GET /api/download/{provider}/{torrentID}/{fileID}` | save a file to your device (served from the local copy if there is one) |
 | `GET /healthz` | liveness |
 
 ## FAQ

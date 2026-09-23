@@ -85,5 +85,13 @@ database:
   # env: JELLYBIRD_DATABASE_PATH
   path: "data/jellybird.db"
 
+# "Keep local": download titles onto the server (in place of their .strm)
+# so they play offline. Started per title from the Library/Cloud pages.
+downloads:
+  # Files downloaded at once.
+  concurrency: 1
+  # Never start a download that would leave less free space than this.
+  min_free_gb: 5
+
 # debug | info | warn | error   (env: JELLYBIRD_LOG_LEVEL)
 log_level: "info"

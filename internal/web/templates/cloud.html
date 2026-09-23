@@ -76,14 +76,26 @@ function renderPage() {
     <tr><td>${esc(t.name)}</td><td>${pill(t.provider,"blue")}</td>
     <td>${statusPill(t.status)}</td><td class="muted">${esc(t.files)}</td>
     <td class="muted">${esc(fmtSize(t.size))}</td>
-    <td><button class="ghost removebtn" data-provider="${esc(t.provider)}" data-id="${esc(t.id)}">Remove</button></td></tr>`).join("")
+    <td>${t.status === "ready" ? `<button class="ghost keepbtn" data-provider="${esc(t.provider)}" data-id="${esc(t.id)}" title="Download every library file of this torrent to the server for offline playback">Keep local</button>` : ""}
+        <button class="ghost removebtn" data-provider="${esc(t.provider)}" data-id="${esc(t.id)}">Remove</button></td></tr>`).join("")
     : `<tr><td colspan="6" class="muted">No matches.</td></tr>`;
   $("#cloudpageinfo").textContent = `Page ${cloudPage + 1} of ${totalPages} (${filtered.length} of ${cloudData.length} total)`;
   $("#cloudprev").disabled = cloudPage === 0;
   $("#cloudnext").disabled = cloudPage >= totalPages - 1;
+  $$("#cloudtbl button.keepbtn").forEach(btn => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        const res = await api("/api/local", {method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({provider: btn.dataset.provider, torrent_id: btn.dataset.id})});
+        btn.textContent = res.queued ? `✓ queued ${res.queued}` : "✓ already local";
+        $("#err").textContent = res.queued ? "Downloading to the server — progress is on the Library page." : "";
+      } catch (e) { $("#err").textContent = e.message; btn.disabled = false; }
+    };
+  });
   $$("#cloudtbl button.removebtn").forEach(btn => {
     btn.onclick = async () => {
-      if (!confirm("Remove this from your debrid cloud? This deletes it there and removes its STRM file.")) return;
+      if (!confirm("Remove this from your debrid cloud? This deletes it there and removes its STRM file. Local copies on the server are kept.")) return;
       btn.disabled = true; btn.textContent = "…";
       try {
         const params = new URLSearchParams({provider: btn.dataset.provider, id: btn.dataset.id});

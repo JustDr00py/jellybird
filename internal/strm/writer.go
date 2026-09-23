@@ -293,6 +293,14 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 				continue
 			}
 
+			// A finished "keep local" copy replaces the .strm for good.
+			if w.keepLocal(ctx, name, t.ID, f, absPath) {
+				if created {
+					res.Created++
+				}
+				continue
+			}
+
 			if err := w.writeStrm(absPath, w.StreamURL(name, t.ID, f.ID)); err != nil {
 				w.log.Error("write strm failed", "path", absPath, "err", err)
 				continue
@@ -417,7 +425,9 @@ func (w *Writer) removeStrmFile(path string) error {
 	return nil
 }
 
-// removeStrm deletes the STRM file and its database row.
+// removeStrm deletes the STRM file and its database row. A "keep local"
+// copy beside it is deliberately left in place (it only goes away via
+// RemoveLocalCopy): losing the cloud copy is exactly when it matters.
 func (w *Writer) removeStrm(ctx context.Context, cf store.CloudFile) error {
 	if cf.StrmPath != "" {
 		if err := w.removeStrmFile(cf.StrmPath); err != nil {

@@ -24,6 +24,7 @@ type Config struct {
 	Indexers   Indexers   `yaml:"indexers"`
 	Watchlist  Watchlist  `yaml:"watchlist"`
 	Database   Database   `yaml:"database"`
+	Downloads  Downloads  `yaml:"downloads"`
 	LogLevel   string     `yaml:"log_level"`
 }
 
@@ -130,6 +131,16 @@ type Watchlist struct {
 	MarkAvailable bool `yaml:"mark_available"`
 }
 
+// Downloads configures "keep local" copies: real files downloaded into
+// the library in place of .strm entries, for offline playback.
+type Downloads struct {
+	// Concurrency is how many files download at once.
+	Concurrency int `yaml:"concurrency"`
+	// MinFreeGB refuses to start a download that would leave less than
+	// this much free space on the library disk.
+	MinFreeGB int64 `yaml:"min_free_gb"`
+}
+
 // Database configures the SQLite store.
 type Database struct {
 	// Path to the SQLite file. Empty uses "<data dir>/jellybird.db".
@@ -165,6 +176,10 @@ func Defaults() Config {
 		},
 		Watchlist: Watchlist{
 			Interval: 2 * time.Minute,
+		},
+		Downloads: Downloads{
+			Concurrency: 1,
+			MinFreeGB:   5,
 		},
 		LogLevel: "info",
 	}
@@ -240,6 +255,12 @@ func (c *Config) Validate() error {
 		if err := auth.ValidatePassword(c.Server.AdminPassword); err != nil {
 			errs = append(errs, fmt.Errorf("server.admin_password: %w", err))
 		}
+	}
+	if c.Downloads.Concurrency < 1 || c.Downloads.Concurrency > 8 {
+		errs = append(errs, errors.New("downloads.concurrency must be between 1 and 8"))
+	}
+	if c.Downloads.MinFreeGB < 0 {
+		errs = append(errs, errors.New("downloads.min_free_gb must not be negative"))
 	}
 	if c.Sync.Interval < 30*time.Second {
 		errs = append(errs, errors.New("sync.interval must be at least 30s to respect API rate limits"))
