@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
@@ -70,7 +71,8 @@ type Writer struct {
 	log   *slog.Logger
 	// externalBase is the gateway base URL written into .strm files.
 	externalBase string
-	// token is appended as a query parameter when set.
+	// token is the server secret; .strm URLs carry a per-file signature
+	// derived from it, never the token itself.
 	token string
 }
 
@@ -90,7 +92,7 @@ func NewWriter(cfg config.Config, st *store.Store, log *slog.Logger, externalBas
 func (w *Writer) StreamURL(p provider.Name, torrentID, fileID string) string {
 	u := fmt.Sprintf("%s/stream/%s/%s/%s", w.externalBase, p, torrentID, fileID)
 	if w.token != "" {
-		u += "?token=" + w.token
+		u += "?sig=" + auth.StreamSig(w.token, string(p), torrentID, fileID)
 	}
 	return u
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
 )
@@ -96,10 +97,33 @@ func TestTokenAuth(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no-token code = %d", rec.Code)
 	}
+	// Legacy .strm files (raw token) keep working until rewritten.
 	rec = httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream/torbox/123/456?token=s3cret", nil))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("with-token code = %d", rec.Code)
+	}
+}
+
+func TestSignedStreamURLs(t *testing.T) {
+	r, _, _ := testResolver(t, "s3cret")
+	sig := auth.StreamSig("s3cret", "torbox", "123", "456")
+	for path, want := range map[string]int{
+		"/stream/torbox/123/456?sig=" + sig: http.StatusFound,
+		// A signature is only good for the file it was made for.
+		"/stream/torbox/123/457?sig=" + sig: http.StatusUnauthorized,
+		"/stream/torbox/124/456?sig=" + sig: http.StatusUnauthorized,
+		// Signed with a different secret.
+		"/stream/torbox/123/456?sig=" + auth.StreamSig("other", "torbox", "123", "456"): http.StatusUnauthorized,
+		"/stream/torbox/123/456?sig=garbage": http.StatusUnauthorized,
+		// A bad sig must not fall back to a (correct) token.
+		"/stream/torbox/123/456?sig=garbage&token=s3cret": http.StatusUnauthorized,
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("%s: code %d, want %d", path, rec.Code, want)
+		}
 	}
 }
 

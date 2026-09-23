@@ -50,7 +50,8 @@ func Mount(r chi.Router, d Deps) {
 	})
 
 	// Player-facing resolver (also used by media servers reading .strm).
-	// Stays on the ?token= query param baked into .strm files.
+	// Authorized by the per-file ?sig= baked into .strm files (never the
+	// token itself: Jellyfin shows .strm targets to every user).
 	r.Handle("/stream/*", d.Resolver)
 
 	r.Group(func(r chi.Router) {

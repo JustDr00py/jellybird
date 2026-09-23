@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -213,4 +214,24 @@ func (l *Limiter) gc(now time.Time) {
 			delete(l.entries, k)
 		}
 	}
+}
+
+// StreamSig signs one stream URL. .strm files carry this instead of the
+// server token: Jellyfin shows a .strm's target to every user under Media
+// Info, and the token also unlocks the API. A signature only proves the
+// right to stream that one file, and the token can't be recovered from it.
+func StreamSig(secret, provider, torrentID, fileID string) string {
+	// Derive a dedicated key so signatures never share a MAC with anything
+	// else keyed by the same secret.
+	kdf := hmac.New(sha256.New, []byte(secret))
+	kdf.Write([]byte("jellybird stream signing v1"))
+	mac := hmac.New(sha256.New, kdf.Sum(nil))
+	mac.Write([]byte(provider + "\x00" + torrentID + "\x00" + fileID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
+}
+
+// VerifyStreamSig checks a StreamSig in constant time.
+func VerifyStreamSig(secret, provider, torrentID, fileID, sig string) bool {
+	want := StreamSig(secret, provider, torrentID, fileID)
+	return hmac.Equal([]byte(sig), []byte(want))
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/config"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
@@ -342,12 +343,17 @@ func TestSizeFilterSkipsSamples(t *testing.T) {
 	}
 }
 
-func TestStreamURLToken(t *testing.T) {
-	w, st, _ := testWriter(t)
-	_ = st
+// The server token must never be written into .strm files: Jellyfin shows
+// their target to every user, and the token also unlocks the API.
+func TestStreamURLSignsInsteadOfLeakingToken(t *testing.T) {
+	w, _, _ := testWriter(t)
 	w.token = "s3cret"
 	got := w.StreamURL(provider.TorBox, "9", "5")
-	if want := "http://gw:8097/stream/torbox/9/5?token=s3cret"; got != want {
+	if strings.Contains(got, "s3cret") {
+		t.Fatalf("token leaked into stream URL: %q", got)
+	}
+	want := "http://gw:8097/stream/torbox/9/5?sig=" + auth.StreamSig("s3cret", "torbox", "9", "5")
+	if got != want {
 		t.Errorf("url = %q want %q", got, want)
 	}
 }

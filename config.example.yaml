@@ -9,8 +9,10 @@ server:
   # or "http://192.168.1.50:8097". Empty uses http://127.0.0.1:<address>.
   external_url: ""
   # Shared secret protecting /stream and machine access to /api.
-  # Media servers send it via the query string embedded in the .strm files;
-  # the Jellybird Jellyfin plugin sends it as the X-Jellybird-Token header.
+  # .strm files never contain it — they carry a per-file signature derived
+  # from it — so Jellyfin users can't read it from Media Info. The Jellybird
+  # Jellyfin plugin sends it as the X-Jellybird-Token header. Changing it
+  # re-signs every .strm on the next sync.
   # If set, it is also required to claim the first account at /setup.
   # env: JELLYBIRD_SERVER_TOKEN
   token: ""

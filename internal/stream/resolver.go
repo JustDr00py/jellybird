@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"jellybird/internal/auth"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
 )
@@ -35,10 +36,6 @@ func (r *Resolver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if r.token != "" && subtle.ConstantTimeCompare([]byte(req.URL.Query().Get("token")), []byte(r.token)) != 1 {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
 	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
 	// parts: stream, provider, torrentID, fileID
 	if len(parts) != 4 {
@@ -51,6 +48,10 @@ func (r *Resolver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	torrentID, fileID := parts[2], parts[3]
+	if !r.authorized(req, name, torrentID, fileID) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	link, err := r.resolve(req.Context(), name, torrentID, fileID)
 	if err != nil {
@@ -63,6 +64,21 @@ func (r *Resolver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Location", link)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusFound)
+}
+
+// authorized accepts the per-file signature written into .strm files. The
+// raw token is still accepted (?token=) so .strm files written by older
+// versions keep playing until the next sync rewrites them.
+func (r *Resolver) authorized(req *http.Request, name provider.Name, torrentID, fileID string) bool {
+	if r.token == "" {
+		return true
+	}
+	q := req.URL.Query()
+	if sig := q.Get("sig"); sig != "" {
+		return auth.VerifyStreamSig(r.token, string(name), torrentID, fileID, sig)
+	}
+	tok := q.Get("token")
+	return tok != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(r.token)) == 1
 }
 
 func (r *Resolver) resolve(ctx context.Context, name provider.Name, torrentID, fileID string) (string, error) {

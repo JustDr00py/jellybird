@@ -120,8 +120,10 @@ are rate-limited (5 per 15 minutes per IP and per username).
 
 `/api/*` accepts either a dashboard session or the server token in the
 `X-Jellybird-Token` header, which is what the Jellybird Jellyfin plugin
-uses. `/stream/*` keeps the `?token=` query parameter embedded in `.strm`
-files.
+uses. `/stream/*` URLs in `.strm` files carry a per-file `?sig=` signature
+derived from the token, never the token itself — Jellyfin shows `.strm`
+targets to every user under Media Info, and a signature only lets someone
+stream that one file.
 
 ## Offline copies
 
