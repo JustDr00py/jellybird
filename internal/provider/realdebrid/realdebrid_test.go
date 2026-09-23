@@ -121,6 +121,11 @@ func TestListCloudCachesFileInfo(t *testing.T) {
 				"files": []map[string]any{{"id": 1, "path": "/Dune.2021.1080p.mkv", "bytes": 8000000000, "selected": 1}},
 			})
 		case r.URL.Path == "/torrents/delete/12345":
+			// Real-Debrid rejects anything but DELETE here.
+			if r.Method != http.MethodDelete {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("path = %s", r.URL.Path)

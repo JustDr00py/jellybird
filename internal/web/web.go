@@ -164,6 +164,7 @@ func (h *handlers) removeTorrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.d.Engine.RemoveTorrent(r.Context(), name, torrentID); err != nil {
+		h.d.Log.Warn("remove torrent failed", "provider", name, "torrent", torrentID, "err", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}

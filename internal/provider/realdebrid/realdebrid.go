@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -346,13 +347,23 @@ func (c *Client) FileLink(ctx context.Context, torrentID, fileID string) (string
 
 // Delete implements provider.Provider.
 func (c *Client) Delete(ctx context.Context, torrentID string) error {
-	resp, err := provider.FormPOST(ctx, c.http, c.baseURL+"/torrents/delete/"+torrentID, nil, c.apiKey)
+	// Real-Debrid only accepts the DELETE method here; a POST is rejected
+	// with 403 wrong_parameter.
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		c.baseURL+"/torrents/delete/"+url.PathEscape(torrentID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.http.Do(ctx, req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("realdebrid: delete HTTP %d", resp.StatusCode)
+	// 404 means it's already gone, which is what the caller wanted.
+	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("realdebrid: delete HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	c.fileMu.Lock()
 	delete(c.fileCache, torrentID)
