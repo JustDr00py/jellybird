@@ -246,6 +246,17 @@ func (w *Writer) SyncProvider(ctx context.Context, name provider.Name, torrents 
 				}
 			}
 
+			// The file named an episode but no season ("Episode 03", season
+			// 1 guessed): a season from the folder or the torrent name is
+			// better evidence.
+			if !hasHint && parsed.Kind == KindTV && parsed.SeasonAssumed {
+				if season, ok := SeasonFromPath(f.Path); ok {
+					parsed.Season = season
+				} else if tParsed := Parse(t.Name); tParsed.Kind == KindTV && tParsed.Season > 0 {
+					parsed.Season = tParsed.Season
+				}
+			}
+
 			var relPath string
 			if w.cfg.PreserveStructure {
 				relPath = filepath.Join(w.cfg.MoviesDir, sanitizePath(t.Name), sanitizePath(f.Path))

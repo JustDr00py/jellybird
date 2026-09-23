@@ -144,6 +144,23 @@ func TestSyncSeasonFolderRescue(t *testing.T) {
 	}
 }
 
+// A file naming only "Ep 01" takes its season from the torrent name
+// instead of the season-1 guess.
+func TestSyncEpisodeWordTakesTorrentSeason(t *testing.T) {
+	w, _, libPath := testWriter(t)
+	torrents := []provider.Torrent{{
+		ID: "T1", Name: "Breaking Bad S04 Complete (2011) 1080p ENG-ITA MultiSub x264 BluRay -Shiv@", Status: provider.StatusReady,
+		Files: []provider.File{{ID: "1", Path: "Ep 01 - Box Cutter - Il Taglierino.mkv", SizeBytes: 500_000_000}},
+	}}
+	if _, err := w.SyncProvider(context.Background(), provider.RealDebrid, torrents); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(libPath, "Shows", "Breaking Bad", "Season 04", "Breaking Bad S04E01.strm")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("missing %s (%v)", want, err)
+	}
+}
+
 func TestSyncProviderPrunesDeleted(t *testing.T) {
 	w, _, libPath := testWriter(t)
 	ctx := context.Background()

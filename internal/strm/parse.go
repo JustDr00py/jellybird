@@ -27,6 +27,10 @@ type Parsed struct {
 	Episode int
 	// ShowTitle is set for TV episodes (may equal Title).
 	ShowTitle string
+	// SeasonAssumed marks a Season of 1 that was guessed because the name
+	// had an episode number but no season at all. Callers with better
+	// context (torrent name, "Season NN" folder) should override it.
+	SeasonAssumed bool
 }
 
 var (
@@ -59,8 +63,14 @@ var (
 	// ("Show - 02 (1080p) [hash]", "Show - 73 - Episode Title"). Season is
 	// assumed to be 1. Unlike dashEpRe, no leading "s\d" is required, so
 	// this must stay narrower (separators required on both sides of the
-	// dash) to avoid swallowing "Title - Subtitle"-style movie names.
-	fansubDashEpRe = regexp.MustCompile(`(?i)[\.\_\s]-[\.\_\s](\d{1,3})(?:[\.\_\s]|$)`)
+	// dash) to avoid swallowing "Title - Subtitle"-style movie names. A
+	// double-episode range ("Show - 88-89 (720p)") is accepted and filed
+	// under its first episode.
+	fansubDashEpRe = regexp.MustCompile(`(?i)[\.\_\s]-[\.\_\s](\d{1,3})(?:-\d{1,3})?(?:[\.\_\s]|$)`)
+	// episodeWordRe matches a spelled-out "Episode 01" / "Ep.3" / "Episode
+	// 3v2" marker with no season at all (season assumed 1), as used by some
+	// batch encoders. The keyword is required, so bare numbers never match.
+	episodeWordRe = regexp.MustCompile(`(?i)(?:^|[\.\_\s\-\[\(])(?:episode|ep)[\.\_\s]?(\d{1,3})(?:v\d)?(?:$|[\.\_\s\-\]\)])`)
 	// leadingTagRe strips a "[ReleaseGroup]" prefix some fansub groups use
 	// (e.g. "[SubsPlease] Show..."). It has no space before the "]", so the
 	// normal edge-trimming in cleanTitle can't remove it on its own.
@@ -73,7 +83,7 @@ var (
 	// yearRe finds a plausible (1930-2039) year token.
 	yearRe = regexp.MustCompile(`(?:^|[\.\_\s\-\[\(])((?:19[3-9]\d|20[0-3]\d))(?:$|[\.\_\s\-\]\)])`)
 	// trashRe strips release tags that pollute titles.
-	trashRe = regexp.MustCompile(`(?i)\b(?:480p|720p|1080[pi]|2160p|4k|uhd|web[\.\- ]?dl|web[\.\- ]?rip|web|br?rip|blu[\.\- ]?ray|bdrip|dvdrip|dvd|hdtv|hdts|cam|screener|x264|x265|h\.?264|h\.?265|hevc|avc|xvid|divx|aac2?\.?0|ac3|eac3|dts(\-hd)?|truehd|atmos|ddp?5?\.?1|10bit|8bit|hdr10(\+)?|dv|dolby[\.\- ]?vision|dolby[\.\- ]?atmos|repack|proper|real|extended|remastered|unrated|imax|multi|dubbed|subbed|internal|limited|remux|nordic|german|french|italian|spanish|dutch|complete|season|part\s?\d+)\b`)
+	trashRe = regexp.MustCompile(`(?i)\b(?:480p|720p|1080[pi]|2160p|4k|uhd|web[\.\- ]?dl|web[\.\- ]?rip|web|br?rip|blu[\.\- ]?ray|bdrip|dvdrip|dvd|hdtv|hdts|cam|screener|x264|x265|h\.?264|h\.?265|hevc|avc|xvid|divx|aac2?\.?0|ac3|eac3|dts(\-hd)?|truehd|atmos|ddp?5?\.?1|10bit|8bit|hdr10(\+)?|dv|dolby[\.\- ]?vision|dolby[\.\- ]?atmos|repack|proper|real|extended|remastered|unrated|imax|multi|dubbed|subbed|internal|limited|remux|enhanced|nordic|german|french|italian|spanish|dutch|complete|season|part\s?\d+)\b`)
 	// tokenRe splits release name into tokens.
 	tokenRe = regexp.MustCompile(`[\.\_ ]+`)
 	// bareEpisodeRe matches a standalone episode number in a filename that
@@ -163,6 +173,27 @@ func Parse(name string) Parsed {
 		p.Season = 1
 		p.Episode = atoi(m[1])
 		p.ShowTitle = cleanTitle(base, m[0])
+		p.Title = p.ShowTitle
+		return p
+	}
+
+	// Spelled-out "Episode 01" with no season. A release year after the
+	// marker means a movie title that happens to contain the word
+	// ("Star.Wars.Episode.1.The.Phantom.Menace.1999"), so that's skipped.
+	// A season named earlier in the same name ("Show Season 04. Episode
+	// 02") wins; otherwise season 1 is only a guess (SeasonAssumed).
+	if m := episodeWordRe.FindStringSubmatchIndex(base); m != nil && !yearRe.MatchString(base[m[1]-1:]) {
+		marker := base[m[0]:m[1]]
+		p.Kind = KindTV
+		p.Episode = atoi(base[m[2]:m[3]])
+		if sm := seasonPackRe.FindStringSubmatchIndex(base[:m[0]+1]); sm != nil {
+			p.Season = atoi(base[sm[2]:sm[3]])
+			p.ShowTitle = stripYear(cleanTitle(base, base[sm[0]:sm[1]]))
+		} else {
+			p.Season = 1
+			p.SeasonAssumed = true
+			p.ShowTitle = cleanTitle(base, marker)
+		}
 		p.Title = p.ShowTitle
 		return p
 	}

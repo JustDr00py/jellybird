@@ -111,6 +111,38 @@ func TestParse(t *testing.T) {
 			"Pokémon - 73 - To Master The Onixpected   [DarkDream].mkv",
 			Parsed{Kind: KindTV, Title: "Pokémon", ShowTitle: "Pokémon", Season: 1, Episode: 73},
 		},
+		// Double-episode fansub file (regression: "- 88-89" didn't match the
+		// single-number dash pattern, so one file of an otherwise-TV pack
+		// was filed as a movie).
+		{
+			"[RyRo]_Inazuma_Eleven_-_88-89_(1280x720_x264_AAC)_[5B04E505].mkv",
+			Parsed{Kind: KindTV, Title: "Inazuma Eleven", ShowTitle: "Inazuma Eleven", Season: 1, Episode: 88},
+		},
+		{
+			"[RyRo]_Inazuma_Eleven_-_90_(1280x720_x264_AAC)_[EB8B7CDB].mkv",
+			Parsed{Kind: KindTV, Title: "Inazuma Eleven", ShowTitle: "Inazuma Eleven", Season: 1, Episode: 90},
+		},
+		// Spelled-out "Episode NN" with no season marker (regression: whole
+		// series filed as one movie per episode).
+		{
+			"[bonkai77].Samurai.Champloo.(ENHANCED).Episode.01.Tempestuous.Temperaments.1080p.Dual.Audio.Bluray [D94E527C].mkv",
+			Parsed{Kind: KindTV, Title: "Samurai Champloo", ShowTitle: "Samurai Champloo", Season: 1, Episode: 1, SeasonAssumed: true},
+		},
+		{
+			"[Desu is dead] Super Dragon Ball Heroes Meteor Mission Episode 3v2 (SDBH EP53) [1080p].mkv",
+			Parsed{Kind: KindTV, Title: "Super Dragon Ball Heroes Meteor Mission", ShowTitle: "Super Dragon Ball Heroes Meteor Mission", Season: 1, Episode: 3, SeasonAssumed: true},
+		},
+		// A season earlier in the name wins over the season-1 guess.
+		{
+			"Breaking Bad (2011) Season 04. Episode 02. Full HD BD-Remux by Wild_Cat.mkv",
+			Parsed{Kind: KindTV, Title: "Breaking Bad", ShowTitle: "Breaking Bad", Season: 4, Episode: 2},
+		},
+		// ...but a movie with "Episode N" in its title and a trailing year
+		// stays a movie.
+		{
+			"Star.Wars.Episode.1.The.Phantom.Menace.1999.1080p.BluRay.x264",
+			Parsed{Kind: KindMovie, Title: "Star Wars Episode 1 The Phantom Menace", Year: 1999},
+		},
 		// Sequel numbers still stay part of the title when there's no dash
 		// (regression guard against fansubDashEpRe over-matching).
 		{
