@@ -128,8 +128,10 @@ Sign in at `http://<host>:8097` (see [Dashboard login](#dashboard-login)).
 
 ## Jellyfin plugin
 
-`plugin/` ships the **Jellybird** Jellyfin plugin, and the example
-`docker-compose.yml` mounts it into Jellyfin's plugin folder. In Jellyfin,
+`plugin/` ships the **Jellybird** Jellyfin plugin (built from
+[jellyfin-plugin-jellybird](https://github.com/JustDr00py/jellyfin-plugin-jellybird),
+GPL-3.0), and the example `docker-compose.yml` mounts it into Jellyfin's
+plugin folder. In Jellyfin,
 open **Dashboard → Plugins → Jellybird** and set:
 
 - **jellybird base URL** — e.g. `http://jellybird:8097`
