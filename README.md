@@ -323,4 +323,7 @@ sessions, stream signatures) · `internal/store` (SQLite) · `internal/web`
 
 ## License
 
-TBD — pick before publishing (GPLv3 if you want Jellyfin-repo distribution).
+jellybird is free software, licensed under the
+[GNU General Public License v3.0](LICENSE). You can use, modify and share
+it; if you distribute a modified version, it must stay under the GPL with
+its source available.
