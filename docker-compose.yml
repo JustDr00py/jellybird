@@ -18,8 +18,16 @@ services:
       - media:/media
       - data:/data
     environment:
-      # The URL Jellyfin will use to reach jellybird (compose service name).
-      JELLYBIRD_SERVER_EXTERNAL_URL: "http://jellybird:8097"
+      # Base URL written into every .strm file. It must be reachable from
+      # the PLAYBACK DEVICES, not just from Jellyfin: clients that direct
+      # play (Roku, Android TV / Google TV) open this URL themselves. The
+      # compose service name ("http://jellybird:8097") only resolves inside
+      # the container network, so those clients fail to play unless they
+      # use an external player. Set it in .env to this host's LAN address
+      # or DNS name (e.g. http://192.168.1.50:8097), recreate the container,
+      # then run "Scan All Libraries" in Jellyfin. No library wipe needed:
+      # the next sync rewrites the .strm contents in place.
+      JELLYBIRD_SERVER_EXTERNAL_URL: "${JELLYBIRD_SERVER_EXTERNAL_URL:-http://jellybird:8097}"
       # `${VAR:-}` defaults to empty and stays quiet when an integration is
       # off. jellybird needs at least ONE provider key; if neither is set the
       # container exits with a clear message — check `docker logs jellybird`.
