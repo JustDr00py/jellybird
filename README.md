@@ -32,6 +32,22 @@ pattern — no FUSE mounts, no rclone, no arr stack required.
 4. **Watchlist automation** *(optional)* — point jellybird at Jellyseerr and
    approved requests are downloaded to your debrid and marked Available
    automatically.
+5. **Offline copies** *(optional)* — one click downloads a title onto the
+   server in place of its `.strm`, so it keeps playing without the internet
+   or your debrid. See [Offline copies](#offline-copies).
+
+## No big drives needed
+
+Your media lives on your debrid; jellybird only writes tiny `.strm`
+pointers (about 100 bytes each). A real library of 146 movies and 35 shows,
+**about 12 TB of media, takes about 12 MB on disk**. No NAS, no RAID, no
+drive upgrades as the library grows — a mini PC or an old laptop is plenty
+for jellybird and a media server that direct-plays.
+
+The trade-offs: you need a debrid subscription, playback depends on your
+internet connection (4K remuxes want a solid one), and transcoding still
+happens on your media server's hardware. For titles you can't live without
+offline, use **Keep local** to store just those on disk.
 
 ## Quick start (Docker)
 
@@ -69,6 +85,86 @@ export JELLYBIRD_SERVER_EXTERNAL_URL=http://$(hostname):8097
 
 Dashboard: `http://localhost:8097` · Health: `/healthz`
 
+## Updating
+
+```bash
+git pull
+docker compose up -d --build jellybird
+```
+
+With **podman-compose**, add `--force-recreate --no-deps`: podman-compose
+only recreates a container when the compose file changes, so a rebuilt
+image would otherwise be ignored and the old version keeps running.
+
+```bash
+podman compose up -d --build --force-recreate --no-deps jellybird
+```
+
+The first sync after an update applies any naming fixes: affected `.strm`
+files are moved (never duplicated) and Jellyfin picks up the changes.
+
+## The dashboard
+
+Sign in at `http://<host>:8097` (see [Dashboard login](#dashboard-login)).
+
+- **Library** — every tracked file with its `.strm` path, filterable by
+  title and provider. **Edit** fixes a title jellybird misnamed (title,
+  year, movie/TV, season/episode) and re-files it immediately. **Keep
+  local** / **Save** per file, a **Local copies** panel with download
+  progress, **Sync now**, and **Wipe library** to rebuild every `.strm` from
+  scratch (your debrid cloud is untouched).
+- **Search & Add** — search TMDB, pick a season and episode for shows, and
+  see which releases are cached on your debrid (instant) and which titles
+  are already in your library. One click adds a release, named after the
+  TMDB title regardless of how the release group spelled it.
+- **Cloud** — your live Real-Debrid / TorBox torrents, filterable by name,
+  provider, status and file count. **Remove** deletes a torrent from your
+  debrid *and* its `.strm` files in one go; **Keep local** downloads a whole
+  torrent (e.g. a season pack). Paste a magnet link to add it directly,
+  optionally with a clean title to file it under.
+- **Settings** — debrid account and premium status, last sync, the
+  API/stream token (for the Jellyfin plugin), **change password**, and the
+  state of Jellyseerr watchlist requests.
+
+## Jellyfin plugin
+
+`plugin/` ships the **Jellybird** Jellyfin plugin, and the example
+`docker-compose.yml` mounts it into Jellyfin's plugin folder. In Jellyfin,
+open **Dashboard → Plugins → Jellybird** and set:
+
+- **jellybird base URL** — e.g. `http://jellybird:8097`
+- **Token** — your `server.token` (shown on jellybird's Settings page)
+
+It lets you search and add debrid content without leaving Jellyfin, and
+adds a **Trigger Sync** scheduled task. It talks to jellybird's API with
+the `X-Jellybird-Token` header; if you change the token, update it here.
+
+## Naming and filtering
+
+Release names are chaos, so jellybird works hard to file things where your
+media server expects them:
+
+- **Movies vs. shows** — `S01E02`, `1x02`, multi-episode `S01E02E03`,
+  fansub `Show - 02` and `S2 - 04`, double episodes `Show - 88-89`,
+  spelled-out `Episode 01` / `Ep 3v2`, `Season NN` folders, and "Season(s)
+  1-14" / "Complete Series" batch packs all file as TV. Titles that merely
+  contain "Episode" and a year (`Star Wars Episode 1 … 1999`) stay movies.
+- **Seasons** — a season named in the file, its folder or the torrent name
+  is used; explicit `S00` specials go to `Season 00` (Jellyfin's Specials).
+- **Extras** — samples, trailers and bonus features (`Featurettes/`,
+  `Extras/`, `Behind the Scenes/`, `-trailer` style names …) never become
+  library entries, however large.
+- **Duplicates** — the same episode from several releases gets distinct
+  names (`… [GROUP].strm`) so nothing overwrites anything; Jellyfin shows
+  them as versions of one episode.
+- **Added via search** — the TMDB title, year and episode you picked are
+  used instead of the release name.
+- **Stable** — a sync that finds nothing new rewrites no files, so
+  Jellyfin's real-time monitor isn't triggered every few minutes.
+
+Something still landing in the wrong place? Fix it with **Edit** on the
+Library page, and please open an issue with the file name.
+
 ## Setup per media server
 
 All three servers play STRM the same way — point them at the library root.
@@ -99,6 +195,7 @@ Highlights:
 | `sync.interval` | cloud polling cadence (min 30s) |
 | `tmdb.api_key` | enables the search UI (free key) |
 | `watchlist.*` | Jellyseerr auto-download |
+| `downloads.concurrency` / `downloads.min_free_gb` | offline copies: parallel downloads (default 1) and the free-space reserve (default 5 GB) |
 
 Environment overrides: `JELLYBIRD_<SECTION>_<KEY>` — e.g.
 `JELLYBIRD_REALDEBRID_API_KEY`, `JELLYBIRD_TORBOX_API_KEY`,
@@ -158,17 +255,26 @@ libraries may get throttled.
 |---|---|
 | `GET /stream/{provider}/{torrentID}/{fileID}` | 302 redirect to CDN link |
 | `GET /api/cloud` | live debrid cloud listing |
+| `DELETE /api/cloud?provider=&id=` | remove a torrent from the debrid and its `.strm` files |
 | `GET /api/library` | tracked STRM files |
+| `GET /api/library/check?type=&tmdb_id=&season=&episode=` | is this TMDB title already in the library |
+| `POST /api/library/rename` `{provider, torrent_id, title, year, media_type, season, episode}` | re-file a misnamed title |
+| `POST /api/library/wipe` | delete every `.strm` and resync from scratch |
 | `POST /api/sync` | trigger a sync |
 | `GET /api/search?q=…` | TMDB search |
+| `GET /api/tv/seasons?tmdb_id=` / `GET /api/tv/episodes?tmdb_id=&season=` | season/episode pickers |
 | `GET /api/torrents?type=&tmdb_id=&season=&episode=` | cached-annotated torrents |
-| `POST /api/add` `{magnet, info_hash, provider}` | add a magnet |
+| `POST /api/add` `{magnet, info_hash, provider, title?, year?, media_type?, season?, episode?, tmdb_id?}` | add a magnet (optionally with the title to file it under) |
+| `GET /api/accounts` | debrid accounts, premium status, last sync |
 | `GET /api/requests` | watchlist pipeline state |
+| `POST /api/account/password` `{current, new}` | change the dashboard password (session only) |
 | `GET /api/local` | "keep local" copies and download progress |
 | `POST /api/local` `{provider, torrent_id, file_id?}` | download a file (or a whole torrent) onto the server; retries failed ones |
 | `DELETE /api/local?provider=&torrent_id=&file_id=` | cancel a download / delete a local copy (the title goes back to streaming) |
 | `GET /api/download/{provider}/{torrentID}/{fileID}` | save a file to your device (served from the local copy if there is one) |
 | `GET /healthz` | liveness |
+
+`/api/*` needs a dashboard session or the `X-Jellybird-Token` header.
 
 ## FAQ
 
@@ -187,6 +293,21 @@ which provider has each result cached and adds to the best one.
 **Rate limits?** jellybird stays under the documented limits (RD 250/min,
 TorBox 300/min) with token buckets, and backs off on HTTP 429.
 
+**I deleted something but Jellyfin still shows it.** jellybird removes the
+`.strm` files right away, but Jellyfin's real-time monitor often misses a
+whole show folder disappearing. Run **Dashboard → Libraries → Scan All
+Libraries** and it's gone.
+
+**Do I need to sync or wipe after deleting from my debrid?** No. Removing
+on the Cloud page cleans up immediately; deleting on the debrid's website
+is picked up by the next sync (or **Sync now**). **Wipe library** is only
+for rebuilding every path from scratch.
+
+**Can other Jellyfin users see my token?** No. Jellyfin shows a `.strm`'s
+URL under Media Info, so `.strm` files only carry a per-file signature that
+lets someone stream that one file. If you ran a version from before
+signatures, change `server.token` once (and update the plugin).
+
 ## Development
 
 ```bash
@@ -196,7 +317,9 @@ go build ./cmd/jellybird
 
 Structure: `internal/provider` (debrid clients) · `internal/strm` (release
 parser + sync) · `internal/stream` (resolver) · `internal/debrid` (engine)
-· `internal/web` (dashboard/API) · `internal/watchlist` (Jellyseerr).
+· `internal/download` (offline copies) · `internal/auth` (passwords,
+sessions, stream signatures) · `internal/store` (SQLite) · `internal/web`
+(dashboard/API) · `internal/watchlist` (Jellyseerr).
 
 ## License
 
