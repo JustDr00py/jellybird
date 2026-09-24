@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,16 +17,16 @@ import (
 
 // Config is the root configuration for the jellybird service.
 type Config struct {
-	Server     Server     `yaml:"server"`
-	Providers  Providers  `yaml:"providers"`
-	Library    Library    `yaml:"library"`
-	Sync       Sync       `yaml:"sync"`
-	TMDB       TMDB       `yaml:"tmdb"`
-	Indexers   Indexers   `yaml:"indexers"`
-	Watchlist  Watchlist  `yaml:"watchlist"`
-	Database   Database   `yaml:"database"`
-	Downloads  Downloads  `yaml:"downloads"`
-	LogLevel   string     `yaml:"log_level"`
+	Server    Server    `yaml:"server"`
+	Providers Providers `yaml:"providers"`
+	Library   Library   `yaml:"library"`
+	Sync      Sync      `yaml:"sync"`
+	TMDB      TMDB      `yaml:"tmdb"`
+	Indexers  Indexers  `yaml:"indexers"`
+	Watchlist Watchlist `yaml:"watchlist"`
+	Database  Database  `yaml:"database"`
+	Downloads Downloads `yaml:"downloads"`
+	LogLevel  string    `yaml:"log_level"`
 }
 
 // Server configures the HTTP gateway itself.
@@ -137,8 +138,20 @@ type Downloads struct {
 	// Concurrency is how many files download at once.
 	Concurrency int `yaml:"concurrency"`
 	// MinFreeGB refuses to start a download that would leave less than
-	// this much free space on the library disk.
+	// this much free space on the download disk.
 	MinFreeGB int64 `yaml:"min_free_gb"`
+	// Path is where local copies are stored, e.g. a NAS mount, in the same
+	// Movies/Shows layout as the library (env: JELLYBIRD_DOWNLOADS_PATH).
+	// Empty stores them in the library next to the .strm files.
+	Path string `yaml:"path"`
+}
+
+// Root is the directory local copies are stored under.
+func (d Downloads) Root(library Library) string {
+	if d.Path != "" {
+		return d.Path
+	}
+	return library.Path
 }
 
 // Database configures the SQLite store.
@@ -161,10 +174,10 @@ func Defaults() Config {
 			TVDir:     tvDir,
 		},
 		Sync: Sync{
-			Interval:      10 * time.Minute,
-			RunOnStart:    true,
+			Interval:        10 * time.Minute,
+			RunOnStart:      true,
 			VideoExtensions: []string{".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg", ".ts"},
-			MinFileMB:     50,
+			MinFileMB:       50,
 		},
 		TMDB: TMDB{
 			Language: "en-US",
@@ -222,6 +235,7 @@ var envOverrides = []struct {
 	{"JELLYBIRD_TMDB_API_KEY", func(c *Config, v string) { c.TMDB.APIKey = v }},
 	{"JELLYBIRD_JELLYSEERR_URL", func(c *Config, v string) { c.Watchlist.JellyseerrURL = v }},
 	{"JELLYBIRD_JELLYSEERR_API_KEY", func(c *Config, v string) { c.Watchlist.APIKey = v }},
+	{"JELLYBIRD_DOWNLOADS_PATH", func(c *Config, v string) { c.Downloads.Path = v }},
 	{"JELLYBIRD_DATABASE_PATH", func(c *Config, v string) { c.Database.Path = v }},
 	{"JELLYBIRD_LOG_LEVEL", func(c *Config, v string) { c.LogLevel = v }},
 }
@@ -261,6 +275,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Downloads.MinFreeGB < 0 {
 		errs = append(errs, errors.New("downloads.min_free_gb must not be negative"))
+	}
+	if c.Downloads.Path != "" && !filepath.IsAbs(c.Downloads.Path) {
+		errs = append(errs, errors.New("downloads.path must be an absolute path"))
 	}
 	if c.Sync.Interval < 30*time.Second {
 		errs = append(errs, errors.New("sync.interval must be at least 30s to respect API rate limits"))

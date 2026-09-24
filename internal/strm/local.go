@@ -22,27 +22,104 @@ func LocalPathFor(strmPath, srcPath string) string {
 	return strings.TrimSuffix(strmPath, ".strm") + ext
 }
 
-// withinLibrary reports whether path resolves inside the library root. It
-// guards every filesystem write/delete driven by stored paths.
-func (w *Writer) withinLibrary(path string) bool {
-	rel, err := filepath.Rel(filepath.Clean(w.cfg.Path), filepath.Clean(path))
+// within reports whether path resolves strictly inside root.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// LibraryRoot is the library directory (downloads stage their temp files
-// beneath it so the final rename stays on one filesystem).
-func (w *Writer) LibraryRoot() string { return w.cfg.Path }
+// withinLibrary reports whether path resolves inside the library root. It
+// guards every .strm write/delete driven by stored paths.
+func (w *Writer) withinLibrary(path string) bool { return within(w.cfg.Path, path) }
 
-// PromoteLocal moves a completed download from tmpPath into the library in
-// place of the file's .strm and deletes the .strm. It returns the final
+// localCopyRoot returns the root (download folder or library) a local copy
+// lives under, or "" when it is under neither. It guards every local-copy
+// move/delete driven by stored paths.
+func (w *Writer) localCopyRoot(path string) string {
+	// The download folder may sit inside the library: check it first.
+	for _, root := range []string{w.localRoot, w.cfg.Path} {
+		if within(root, path) {
+			return root
+		}
+	}
+	return ""
+}
+
+// LocalRoot is where local copies are stored. Downloads stage their temp
+// files beneath it so the final rename stays on one filesystem.
+func (w *Writer) LocalRoot() string { return w.localRoot }
+
+// SeparateLocalRoot reports whether local copies go somewhere other than
+// the library (downloads.path is set).
+func (w *Writer) SeparateLocalRoot() bool {
+	return filepath.Clean(w.localRoot) != filepath.Clean(w.cfg.Path)
+}
+
+// localRel is the path of a file's local copy relative to whichever root
+// holds it: the .strm's library-relative path with the real extension.
+func (w *Writer) localRel(strmPath, srcPath string) (string, error) {
+	if !w.withinLibrary(strmPath) {
+		return "", fmt.Errorf("refusing path outside library: %s", strmPath)
+	}
+	return filepath.Rel(w.cfg.Path, LocalPathFor(strmPath, srcPath))
+}
+
+// localDest is where a new local copy of the file goes.
+func (w *Writer) localDest(strmPath, srcPath string) (string, error) {
+	rel, err := w.localRel(strmPath, srcPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(w.localRoot, rel), nil
+}
+
+// MoveTarget is where an existing local copy belongs under the current
+// download root. ok is false when it's already there or its location is
+// not one jellybird manages.
+func (w *Writer) MoveTarget(localPath string) (string, bool) {
+	root := w.localCopyRoot(localPath)
+	if root == "" || root == w.localRoot {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, localPath)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Join(w.localRoot, rel), true
+}
+
+// FinishMove records a local copy moved from oldPath to newPath and
+// deletes the old file. If the entry was removed meanwhile, the new file
+// is deleted instead.
+func (w *Writer) FinishMove(ctx context.Context, lf store.LocalFile, oldPath, newPath string) error {
+	if w.localCopyRoot(oldPath) == "" || w.localCopyRoot(newPath) == "" {
+		return fmt.Errorf("refusing path outside library/download folder: %s", newPath)
+	}
+	done, err := w.store.FinishMove(ctx, lf.Provider, lf.TorrentID, lf.FileID, newPath)
+	if err != nil {
+		return err
+	}
+	stale := oldPath
+	if !done {
+		stale = newPath
+	}
+	if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	w.pruneEmptyDirs(filepath.Dir(stale))
+	return nil
+}
+
+// PromoteLocal moves a completed download from tmpPath into the download
+// root in place of the file's .strm and deletes the .strm. It returns the final
 // path.
 func (w *Writer) PromoteLocal(ctx context.Context, cf store.CloudFile, tmpPath string) (string, error) {
 	if cf.StrmPath == "" {
 		return "", errors.New("file has no library path yet")
 	}
-	dest := LocalPathFor(cf.StrmPath, cf.FilePath)
-	if !w.withinLibrary(dest) || !w.withinLibrary(cf.StrmPath) {
-		return "", fmt.Errorf("refusing path outside library: %s", dest)
+	dest, err := w.localDest(cf.StrmPath, cf.FilePath)
+	if err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return "", fmt.Errorf("mkdir: %w", err)
@@ -60,8 +137,8 @@ func (w *Writer) PromoteLocal(ctx context.Context, cf store.CloudFile, tmpPath s
 // in the cloud, writes its .strm back so the title keeps streaming.
 func (w *Writer) RemoveLocalCopy(ctx context.Context, lf store.LocalFile) error {
 	if lf.LocalPath != "" {
-		if !w.withinLibrary(lf.LocalPath) {
-			return fmt.Errorf("refusing path outside library: %s", lf.LocalPath)
+		if w.localCopyRoot(lf.LocalPath) == "" {
+			return fmt.Errorf("refusing path outside library/download folder: %s", lf.LocalPath)
 		}
 		if err := os.Remove(lf.LocalPath); err != nil && !os.IsNotExist(err) {
 			return err
@@ -98,11 +175,15 @@ func (w *Writer) RemoveLocalCopy(ctx context.Context, lf store.LocalFile) error 
 // written as usual.
 func (w *Writer) keepLocal(ctx context.Context, name provider.Name, torrentID string, f provider.File, strmPath string) bool {
 	lf, err := w.store.GetLocal(ctx, string(name), torrentID, f.ID)
-	if err != nil || lf.Status != store.LocalDone {
+	if err != nil || !lf.HasCopy() {
 		return false
 	}
-	want := LocalPathFor(strmPath, f.Path)
-	if lf.LocalPath != want && w.withinLibrary(want) && w.withinLibrary(lf.LocalPath) {
+	// Follow layout changes within the root the copy is already under
+	// (moving to another disk is an explicit, slow Move), and never while a
+	// Move is copying it.
+	rel, err := w.localRel(strmPath, f.Path)
+	root := w.localCopyRoot(lf.LocalPath)
+	if want := filepath.Join(root, rel); err == nil && root != "" && lf.Status == store.LocalDone && lf.LocalPath != want {
 		if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
 			w.log.Warn("relocate local copy failed", "to", want, "err", err)
 		} else if err := os.Rename(lf.LocalPath, want); err != nil {
@@ -121,9 +202,11 @@ func (w *Writer) keepLocal(ctx context.Context, name provider.Name, torrentID st
 	return true
 }
 
-// pruneEmptyDirs removes dir and its empty parents up to the library root.
+// pruneEmptyDirs removes dir and its empty parents up to the root
+// (library or download folder) it sits under.
 func (w *Writer) pruneEmptyDirs(dir string) {
-	for dir != w.cfg.Path && strings.HasPrefix(dir, w.cfg.Path) {
+	root := w.localCopyRoot(dir)
+	for root != "" && within(root, dir) {
 		entries, err := os.ReadDir(dir)
 		if err != nil || len(entries) > 0 {
 			return

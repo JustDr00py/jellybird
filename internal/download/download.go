@@ -22,9 +22,10 @@ import (
 	"jellybird/internal/strm"
 )
 
-// tempDirName holds partial downloads. It sits inside the library root so
-// the final rename never crosses filesystems, but outside the Movies/Shows
-// folders Jellyfin scans, and its ".part" files aren't media anyway.
+// tempDirName holds partial downloads and moves. It sits inside the
+// download root so the final rename never crosses filesystems, but outside
+// the Movies/Shows folders Jellyfin scans, and its ".part" files aren't
+// media anyway.
 const tempDirName = ".jellybird-downloads"
 
 var (
@@ -55,9 +56,12 @@ type Manager struct {
 	freeBytes func(path string) (int64, bool)
 
 	wake chan struct{}
+	// moveTurn lets one Move copy at a time; the rest wait their turn.
+	moveTurn chan struct{}
 
 	mu      sync.Mutex
 	running map[string]context.CancelFunc // key -> cancel for in-flight jobs
+	runCtx  context.Context               // Run's context, parent of moves
 }
 
 // New builds a Manager.
@@ -68,7 +72,7 @@ func New(st *store.Store, w *strm.Writer, links LinkSource, cfg config.Downloads
 		links:  links,
 		log:    log,
 		cfg:    cfg,
-		tmpDir: filepath.Join(w.LibraryRoot(), tempDirName),
+		tmpDir: filepath.Join(w.LocalRoot(), tempDirName),
 		client: &http.Client{
 			Transport: &http.Transport{
 				Proxy:                 http.ProxyFromEnvironment,
@@ -78,6 +82,7 @@ func New(st *store.Store, w *strm.Writer, links LinkSource, cfg config.Downloads
 		},
 		freeBytes: diskFree,
 		wake:      make(chan struct{}, 8),
+		moveTurn:  make(chan struct{}, 1),
 		running:   map[string]context.CancelFunc{},
 	}
 }
@@ -86,6 +91,9 @@ func key(p, t, f string) string { return p + "/" + t + "/" + f }
 
 // Run processes the queue until ctx is cancelled.
 func (m *Manager) Run(ctx context.Context) {
+	m.mu.Lock()
+	m.runCtx = ctx
+	m.mu.Unlock()
 	if err := m.store.ResetInterruptedLocal(ctx); err != nil {
 		m.log.Warn("reset interrupted downloads failed", "err", err)
 	}
@@ -165,11 +173,167 @@ func (m *Manager) Remove(ctx context.Context, providerName, torrentID, fileID st
 	if err := os.Remove(m.tempPath(lf)); err != nil && !os.IsNotExist(err) {
 		m.log.Warn("remove partial download failed", "err", err)
 	}
-	if lf.Status == store.LocalDone {
+	if lf.HasCopy() {
 		return m.writer.RemoveLocalCopy(ctx, lf)
 	}
 	return nil
 }
+
+// ErrNotMovable is returned by Move for entries that aren't a finished
+// copy outside the download folder.
+var ErrNotMovable = errors.New("only finished local copies outside the download folder can be moved")
+
+// MoveTarget reports where Move would put a finished local copy, or ok
+// false when it's already in the download folder.
+func (m *Manager) MoveTarget(lf store.LocalFile) (string, bool) {
+	if lf.Status != store.LocalDone || lf.LocalPath == "" {
+		return "", false
+	}
+	return m.writer.MoveTarget(lf.LocalPath)
+}
+
+// Move copies a finished local copy saved outside the download folder
+// (e.g. before downloads.path pointed at a NAS) into it, in the background.
+// The copy keeps playing from its old path until the move completes. Moves
+// run one at a time.
+func (m *Manager) Move(ctx context.Context, providerName, torrentID, fileID string) error {
+	lf, err := m.store.GetLocal(ctx, providerName, torrentID, fileID)
+	if err != nil {
+		return err
+	}
+	dest, ok := m.MoveTarget(lf)
+	if !ok {
+		return ErrNotMovable
+	}
+	if started, err := m.store.StartMove(ctx, providerName, torrentID, fileID); err != nil {
+		return err
+	} else if !started {
+		return ErrNotMovable
+	}
+
+	m.mu.Lock()
+	parent := m.runCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	mctx, cancel := context.WithCancel(parent)
+	k := key(providerName, torrentID, fileID)
+	m.running[k] = cancel
+	m.mu.Unlock()
+
+	go func() {
+		defer func() {
+			cancel()
+			m.mu.Lock()
+			delete(m.running, k)
+			m.mu.Unlock()
+		}()
+		select {
+		case m.moveTurn <- struct{}{}:
+			defer func() { <-m.moveTurn }()
+		case <-mctx.Done():
+			return
+		}
+		m.log.Info("move started", "from", lf.LocalPath, "to", dest)
+		err := m.move(mctx, lf, dest)
+		switch {
+		case err == nil:
+			m.log.Info("move finished", "path", dest)
+		case mctx.Err() != nil:
+			// Removed by the user (row gone) or shutting down (reset on start).
+			_ = os.Remove(m.tempPath(lf))
+		default:
+			m.log.Warn("move failed", "from", lf.LocalPath, "err", err)
+			_ = os.Remove(m.tempPath(lf))
+			_ = m.store.EndMove(context.WithoutCancel(mctx), lf.Provider, lf.TorrentID, lf.FileID, "move failed: "+err.Error())
+		}
+	}()
+	return nil
+}
+
+// move copies lf's file to a temp file beside dest, renames it into place
+// and only then deletes the original.
+func (m *Manager) move(ctx context.Context, lf store.LocalFile, dest string) error {
+	src, err := os.Open(lf.LocalPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	st, err := src.Stat()
+	if err != nil {
+		return err
+	}
+	if err := m.checkSpace(st.Size()); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dest); err == nil {
+		return fmt.Errorf("%s already exists", dest)
+	}
+	if err := os.MkdirAll(m.tmpDir, 0o755); err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	tmp := m.tempPath(lf)
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	pw := &progressWriter{
+		w: out, last: time.Now(),
+		report: func(n int64) {
+			_ = m.store.SetLocalProgress(context.WithoutCancel(ctx), lf.Provider, lf.TorrentID, lf.FileID, n)
+		},
+		activity: make(chan struct{}, 1),
+	}
+	_, err = io.Copy(pw, ctxReader{ctx, src})
+	pw.report(pw.done)
+	if err == nil {
+		err = out.Sync()
+	}
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	if pw.done != st.Size() {
+		return fmt.Errorf("size mismatch: copied %d bytes, expected %d", pw.done, st.Size())
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		return err
+	}
+	return m.writer.FinishMove(context.WithoutCancel(ctx), lf, lf.LocalPath, dest)
+}
+
+// ctxReader stops a copy once ctx is cancelled.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// LocalRoot is where local copies are stored.
+func (m *Manager) LocalRoot() string { return m.writer.LocalRoot() }
+
+// SeparateLocalRoot reports whether local copies go outside the library.
+func (m *Manager) SeparateLocalRoot() bool { return m.writer.SeparateLocalRoot() }
+
+// FreeSpace reports free bytes where local copies are stored; ok is false
+// when the platform can't tell.
+func (m *Manager) FreeSpace() (free int64, ok bool) {
+	return m.freeBytes(m.writer.LocalRoot())
+}
+
+// MinFreeBytes is the reserve downloads refuse to eat into.
+func (m *Manager) MinFreeBytes() int64 { return m.cfg.MinFreeGB << 30 }
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
@@ -391,7 +555,7 @@ func (m *Manager) checkSpace(need int64) error {
 	if need <= 0 {
 		return nil
 	}
-	free, ok := m.freeBytes(m.writer.LibraryRoot())
+	free, ok := m.freeBytes(m.writer.LocalRoot())
 	if !ok {
 		return nil
 	}

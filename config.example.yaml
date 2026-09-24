@@ -94,6 +94,11 @@ downloads:
   concurrency: 1
   # Never start a download that would leave less free space than this.
   min_free_gb: 5
+  # Where "keep local" copies go (env: JELLYBIRD_DOWNLOADS_PATH), in the
+  # same Movies/Shows layout as the library, e.g. a NAS mounted at
+  # /downloads. Add its Movies/Shows folders to your Jellyfin libraries.
+  # Empty = inside the library, next to the .strm files.
+  # path: /downloads
 
 # debug | info | warn | error   (env: JELLYBIRD_LOG_LEVEL)
 log_level: "info"

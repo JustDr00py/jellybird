@@ -110,9 +110,9 @@ Sign in at `http://<host>:8097` (see [Dashboard login](#dashboard-login)).
 - **Library** — every tracked file with its `.strm` path, filterable by
   title and provider. **Edit** fixes a title jellybird misnamed (title,
   year, movie/TV, season/episode) and re-files it immediately. **Keep
-  local** / **Save** per file, a **Local copies** panel with download
-  progress, **Sync now**, and **Wipe library** to rebuild every `.strm` from
-  scratch (your debrid cloud is untouched).
+  local** / **Save** / **Remove local** per file, a summary of local copies
+  linking to **Local files**, **Sync now**, and **Wipe library** to rebuild
+  every `.strm` from scratch (your debrid cloud is untouched).
 - **Search & Add** — search TMDB, pick a season and episode for shows, and
   see which releases are cached on your debrid (instant) and which titles
   are already in your library. One click adds a release, named after the
@@ -122,6 +122,10 @@ Sign in at `http://<host>:8097` (see [Dashboard login](#dashboard-login)).
   debrid *and* its `.strm` files in one go; **Keep local** downloads a whole
   torrent (e.g. a season pack). Paste a magnet link to add it directly,
   optionally with a clean title to file it under.
+- **Local files** — every file downloaded to the server: where downloads
+  are saved, disk usage, free space, download progress, and the "only copy" flag for titles gone from
+  your cloud. Filter by name or status, remove files one at a time or in
+  bulk, cancel downloads, and retry or clear failed ones.
 - **Settings** — debrid account and premium status, last sync, the
   API/stream token (for the Jellyfin plugin), **change password**, and the
   state of Jellyseerr watchlist requests.
@@ -224,6 +228,44 @@ derived from the token, never the token itself — Jellyfin shows `.strm`
 targets to every user under Media Info, and a signature only lets someone
 stream that one file.
 
+## Downloads on a NAS
+
+By default **Keep local** copies are saved inside the library, next to the
+`.strm` files. Set `downloads.path` (env `JELLYBIRD_DOWNLOADS_PATH`) to save
+them somewhere else instead, such as a NAS. The library and its `.strm`
+files stay where they are. Copies keep the library layout under that path:
+
+```
+/downloads/Movies/Dune Part Two (2024)/Dune Part Two (2024).mkv
+/downloads/Shows/Severance/Season 02/Severance S02E03.mkv
+```
+
+1. **Mount the share.** In `docker-compose.yml`, uncomment one of the
+   `downloads` volume blocks (NFS or SMB), the `downloads:/downloads` mount
+   in both services and `JELLYBIRD_DOWNLOADS_PATH`, then fill in the
+   `JELLYBIRD_NAS_*` values in `.env`. Rootless Podman can't mount NFS/SMB
+   inside a container: mount the share on the host (e.g. in `/etc/fstab`)
+   and bind it instead, `/mnt/nas/jellybird:/downloads:z` (`:ro,z` for
+   Jellyfin).
+2. **Point Jellyfin at it.** Add `/downloads/Movies` to your Movies library
+   and `/downloads/Shows` to your Shows library, next to the `/media`
+   folders. Jellyfin must see the share at the same path jellybird uses.
+3. **Move older copies** (optional). Copies saved before you set the path
+   stay where they are and are flagged "in library folder" on the **Local
+   files** page. **Move** (per file or for a selection) copies them to the
+   NAS one at a time. Each keeps playing from its old location until the
+   move finishes, then the old file is deleted.
+
+Notes:
+- The share must be writable by the container (it runs as root; with SMB
+  the `uid`/`gid`/`file_mode` options decide ownership).
+- Partial downloads and moves are staged in
+  `<downloads.path>/.jellybird-downloads/`, so finishing one is a quick
+  rename, and `min_free_gb` is checked against the NAS's free space.
+- If you later unset `downloads.path`, copies already on the NAS are left
+  alone, but jellybird can only remove copies under the library or the
+  current `downloads.path`.
+
 ## Offline copies
 
 Everything jellybird adds is streamed from your debrid service by default.
@@ -243,7 +285,10 @@ library scan and can direct-play or transcode it like any local media.
 - Local copies are never deleted by sync: if the title leaves your debrid
   cloud, its local copy stays (flagged "only copy") until you remove it.
 - **Remove local** deletes the file and, if the title is still in your
-  cloud, puts the `.strm` back.
+  cloud, puts the `.strm` back. The **Local files** page does this in bulk
+  and warns before deleting an only copy.
+- Copies can live on another disk or a NAS: see
+  [Downloads on a NAS](#downloads-on-a-nas).
 - **Save** downloads a file to the device you're browsing from. It's
   proxied through jellybird so the debrid service only ever sees the
   server's IP (Real-Debrid can flag accounts used from several IPs).
@@ -272,6 +317,7 @@ libraries may get throttled.
 | `POST /api/account/password` `{current, new}` | change the dashboard password (session only) |
 | `GET /api/local` | "keep local" copies and download progress |
 | `POST /api/local` `{provider, torrent_id, file_id?}` | download a file (or a whole torrent) onto the server; retries failed ones |
+| `POST /api/local/move` `{provider, torrent_id, file_id}` | move a copy saved in the library into `downloads.path` (runs in the background) |
 | `DELETE /api/local?provider=&torrent_id=&file_id=` | cancel a download / delete a local copy (the title goes back to streaming) |
 | `GET /api/download/{provider}/{torrentID}/{fileID}` | save a file to your device (served from the local copy if there is one) |
 | `GET /healthz` | liveness |

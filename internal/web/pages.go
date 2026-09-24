@@ -81,6 +81,20 @@ func (h *handlers) cloudPage(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, http.StatusOK, "cloud.html", map[string]any{})
 }
 
+func (h *handlers) localPage(w http.ResponseWriter, r *http.Request) {
+	data := map[string]any{"Enabled": h.d.Downloads != nil}
+	if h.d.Downloads != nil {
+		if free, ok := h.d.Downloads.FreeSpace(); ok {
+			data["FreeBytes"] = free
+		}
+		data["ReserveBytes"] = h.d.Downloads.MinFreeBytes()
+		if h.d.Downloads.SeparateLocalRoot() {
+			data["DownloadsPath"] = h.d.Downloads.LocalRoot()
+		}
+	}
+	h.render(w, r, http.StatusOK, "local.html", data)
+}
+
 func (h *handlers) settingsPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Config":  &h.d.Config, // pointer: HasSearch/HasWatchlist have pointer receivers

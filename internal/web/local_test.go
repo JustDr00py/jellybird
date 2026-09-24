@@ -2,7 +2,10 @@ package web
 
 import (
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,5 +86,36 @@ func TestDownloadServesLocalCopy(t *testing.T) {
 	resp.Body.Close()
 	if !strings.Contains(string(body), `"in_library":false`) || !strings.Contains(string(body), `"status":"done"`) {
 		t.Fatalf("local list = %s", body)
+	}
+}
+
+func TestLocalPageRenders(t *testing.T) {
+	srv, _ := newTestServer(t, true)
+	c := newClient()
+	resp, _ := c.PostForm(srv.URL+"/login", url.Values{"username": {"admin"}, "password": {"hunter2hunter2"}})
+	resp.Body.Close()
+
+	resp, err := c.Get(srv.URL + "/local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	// The test server has no download manager: the page says so instead
+	// of offering controls that would fail.
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Downloads are disabled") {
+		t.Fatalf("local page: %d\n%s", resp.StatusCode, body)
+	}
+}
+
+func TestLocalPageTemplateEnabled(t *testing.T) {
+	h := &handlers{d: Deps{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	rec := httptest.NewRecorder()
+	h.render(rec, httptest.NewRequest("GET", "/local", nil), http.StatusOK, "local.html",
+		map[string]any{"Enabled": true, "FreeBytes": int64(50 << 30), "ReserveBytes": int64(10 << 30), "DownloadsPath": "/downloads"})
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "50.0 GB") || !strings.Contains(body, "keeps 10.0 GB free") ||
+		!strings.Contains(body, `id="rmsel"`) || !strings.Contains(body, `id="mvsel" data-path="/downloads"`) {
+		t.Fatalf("local page: %d\n%s", rec.Code, body)
 	}
 }

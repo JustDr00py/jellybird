@@ -3,6 +3,7 @@ package download
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,7 @@ type env struct {
 	w       *strm.Writer
 	m       *Manager
 	links   *fakeLinks
+	cfg     config.Config
 	lib     string
 	content []byte
 	rmu     sync.Mutex
@@ -54,7 +56,7 @@ type env struct {
 	torrent provider.Torrent
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, opts ...func(*config.Config)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "db.sqlite"))
@@ -65,10 +67,13 @@ func newEnv(t *testing.T) *env {
 	cfg := config.Defaults()
 	cfg.Library.Path = filepath.Join(dir, "media")
 	cfg.Sync.MinFileMB = 0
+	for _, o := range opts {
+		o(&cfg)
+	}
 	log := slog.New(slog.DiscardHandler)
 	w := strm.NewWriter(cfg, st, log, "http://gw:8097", "")
 
-	e := &env{st: st, w: w, lib: cfg.Library.Path, content: bytes.Repeat([]byte("jellybird!"), 50_000)}
+	e := &env{st: st, w: w, cfg: cfg, lib: cfg.Library.Path, content: bytes.Repeat([]byte("jellybird!"), 50_000)}
 	cdn := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/expired" {
 			http.Error(rw, "expired", http.StatusForbidden)
@@ -287,5 +292,113 @@ func TestTempPathIsSanitized(t *testing.T) {
 	got := m.tempPath(store.LocalFile{Provider: "realdebrid", TorrentID: "../../etc", FileID: "a/b"})
 	if filepath.Dir(got) != "/lib/.jellybird-downloads" {
 		t.Fatalf("temp path escaped: %q", got)
+	}
+}
+
+func TestDownloadsPathStoresOutsideLibrary(t *testing.T) {
+	nas := filepath.Join(t.TempDir(), "nas")
+	e := newEnv(t, func(c *config.Config) { c.Downloads.Path = nas })
+	e.enqueue(t)
+	lf := e.runUntil(t, store.LocalDone)
+
+	want := filepath.Join(nas, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p.mkv")
+	if lf.LocalPath != want {
+		t.Fatalf("local path = %q, want %q", lf.LocalPath, want)
+	}
+	if got, err := os.ReadFile(want); err != nil || !bytes.Equal(got, e.content) {
+		t.Fatalf("copy on NAS mismatch (err %v)", err)
+	}
+	if _, err := os.Stat(e.localPath()); !os.IsNotExist(err) {
+		t.Fatal("copy also written into the library")
+	}
+	if _, err := os.Stat(e.strmPath()); !os.IsNotExist(err) {
+		t.Fatal(".strm should be removed once the NAS copy exists")
+	}
+	if _, err := os.Stat(filepath.Join(e.lib, tempDirName)); !os.IsNotExist(err) {
+		t.Fatal("temp files should be staged on the NAS, not in the library")
+	}
+
+	// Sync keeps the NAS copy and doesn't write the .strm back.
+	e.sync(t, e.torrent)
+	if _, err := os.Stat(e.strmPath()); !os.IsNotExist(err) {
+		t.Fatal("sync recreated .strm over a NAS copy")
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("sync moved the NAS copy: %v", err)
+	}
+
+	if err := e.m.Remove(context.Background(), "realdebrid", "T1", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Dir(want)); !os.IsNotExist(err) {
+		t.Fatal("NAS copy / folder not removed")
+	}
+	if _, err := os.Stat(nas); err != nil {
+		t.Fatal("pruning must stop at the download root")
+	}
+	if _, err := os.Stat(e.strmPath()); err != nil {
+		t.Fatal(".strm not restored after removing the NAS copy")
+	}
+}
+
+func TestMoveToDownloadsPath(t *testing.T) {
+	e := newEnv(t)
+	e.enqueue(t)
+	e.runUntil(t, store.LocalDone) // saved in the library
+
+	// Restart with downloads.path pointing at a NAS.
+	cfg := e.cfg
+	nas := filepath.Join(t.TempDir(), "nas")
+	cfg.Downloads.Path = nas
+	log := slog.New(slog.DiscardHandler)
+	w := strm.NewWriter(cfg, e.st, log, "http://gw:8097", "")
+	m := New(e.st, w, e.links, cfg.Downloads, log)
+	m.freeBytes = func(string) (int64, bool) { return 1 << 50, true }
+	e.w, e.m = w, m
+
+	ctx := context.Background()
+	lf, _ := e.st.GetLocal(ctx, "realdebrid", "T1", "1")
+	want := filepath.Join(nas, "Movies", "Dune Part Two (2024)", "Dune Part Two (2024) - 1080p.mkv")
+	if dest, ok := m.MoveTarget(lf); !ok || dest != want {
+		t.Fatalf("move target = %q %v, want %q", dest, ok, want)
+	}
+	// Sync must leave a library copy alone rather than move it across disks.
+	e.sync(t, e.torrent)
+	if _, err := os.Stat(e.localPath()); err != nil {
+		t.Fatalf("sync touched the library copy: %v", err)
+	}
+
+	if err := m.Move(ctx, "realdebrid", "T1", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Move(ctx, "realdebrid", "T1", "1"); !errors.Is(err, ErrNotMovable) {
+		t.Fatalf("second move = %v, want ErrNotMovable", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lf, _ = e.st.GetLocal(ctx, "realdebrid", "T1", "1")
+		if lf.Status == store.LocalDone {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("move did not finish: %+v", lf)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if lf.LocalPath != want || lf.Error != "" {
+		t.Fatalf("after move: path %q, error %q", lf.LocalPath, lf.Error)
+	}
+	if got, err := os.ReadFile(want); err != nil || !bytes.Equal(got, e.content) {
+		t.Fatalf("moved copy mismatch (err %v)", err)
+	}
+	if _, err := os.Stat(filepath.Dir(e.localPath())); !os.IsNotExist(err) {
+		t.Fatal("old library copy / folder not removed")
+	}
+	if _, ok := m.MoveTarget(lf); ok {
+		t.Fatal("a copy already on the NAS should not be movable")
+	}
+	e.sync(t, e.torrent)
+	if _, err := os.Stat(e.strmPath()); !os.IsNotExist(err) {
+		t.Fatal("sync recreated .strm after the move")
 	}
 }

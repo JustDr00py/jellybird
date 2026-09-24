@@ -13,6 +13,9 @@ const (
 	LocalDownloading = "downloading"
 	LocalDone        = "done"
 	LocalFailed      = "failed"
+	// LocalMoving is a finished copy being copied to the download folder;
+	// it stays playable at LocalPath until the move completes.
+	LocalMoving = "moving"
 )
 
 // LocalFile is a "keep local" request: a debrid file downloaded into the
@@ -29,6 +32,11 @@ type LocalFile struct {
 	LocalPath   string    `json:"local_path"`
 	Error       string    `json:"error"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// HasCopy reports whether a playable local file exists at LocalPath.
+func (lf LocalFile) HasCopy() bool {
+	return lf.Status == LocalDone || lf.Status == LocalMoving
 }
 
 const localCols = `provider, torrent_id, file_id, torrent_name, file_path, size_bytes, bytes_done, status, local_path, error, updated_at`
@@ -74,7 +82,7 @@ func (s *Store) GetLocal(ctx context.Context, provider, torrentID, fileID string
 // ListLocal returns every local-copy entry, active ones first.
 func (s *Store) ListLocal(ctx context.Context) ([]LocalFile, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+localCols+` FROM local_files
-		ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'failed' THEN 2 ELSE 3 END,
+		ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'moving' THEN 0 WHEN 'queued' THEN 1 WHEN 'failed' THEN 2 ELSE 3 END,
 		         created_at`)
 	if err != nil {
 		return nil, err
@@ -101,10 +109,52 @@ func (s *Store) ClaimNextLocal(ctx context.Context) (LocalFile, error) {
 		LocalDownloading, time.Now().Unix(), LocalQueued))
 }
 
-// ResetInterruptedLocal re-queues downloads cut off by a restart; their
-// partial files are resumed.
+// ResetInterruptedLocal re-queues downloads cut off by a restart (their
+// partial files are resumed) and ends interrupted moves: the copy never
+// left its old path.
 func (s *Store) ResetInterruptedLocal(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE local_files SET status = ? WHERE status = ?`, LocalQueued, LocalDownloading)
+	if _, err := s.db.ExecContext(ctx, `UPDATE local_files SET status = ? WHERE status = ?`, LocalQueued, LocalDownloading); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE local_files SET status = ?, bytes_done = size_bytes WHERE status = ?`, LocalDone, LocalMoving)
+	return err
+}
+
+// StartMove marks a finished copy as moving. It reports false when the
+// entry isn't a finished copy (removed, or already moving).
+func (s *Store) StartMove(ctx context.Context, provider, torrentID, fileID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE local_files SET status = ?, bytes_done = 0, error = '', updated_at = ?
+		 WHERE provider = ? AND torrent_id = ? AND file_id = ? AND status = ?`,
+		LocalMoving, time.Now().Unix(), provider, torrentID, fileID, LocalDone)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// FinishMove records a completed move to localPath. It reports false when
+// the entry is no longer moving (removed meanwhile).
+func (s *Store) FinishMove(ctx context.Context, provider, torrentID, fileID, localPath string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE local_files SET status = ?, local_path = ?, bytes_done = size_bytes, error = '', updated_at = ?
+		 WHERE provider = ? AND torrent_id = ? AND file_id = ? AND status = ?`,
+		LocalDone, localPath, time.Now().Unix(), provider, torrentID, fileID, LocalMoving)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// EndMove returns a moving entry to done at its old path, recording why
+// the move failed (empty when cancelled).
+func (s *Store) EndMove(ctx context.Context, provider, torrentID, fileID, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE local_files SET status = ?, bytes_done = size_bytes, error = ?, updated_at = ?
+		 WHERE provider = ? AND torrent_id = ? AND file_id = ? AND status = ?`,
+		LocalDone, reason, time.Now().Unix(), provider, torrentID, fileID, LocalMoving)
 	return err
 }
 

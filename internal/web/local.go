@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"jellybird/internal/download"
 	"jellybird/internal/provider"
 	"jellybird/internal/store"
 	"jellybird/internal/strm"
@@ -29,6 +30,9 @@ type localEntry struct {
 	// InLibrary is false once the file left the debrid cloud: the local
 	// copy is then the only one left.
 	InLibrary bool `json:"in_library"`
+	// MoveTo is set for finished copies outside the download folder: where
+	// POST /api/local/move would put them.
+	MoveTo string `json:"move_to,omitempty"`
 }
 
 // localList is GET /api/local.
@@ -41,7 +45,11 @@ func (h *handlers) localList(w http.ResponseWriter, r *http.Request) {
 	out := make([]localEntry, 0, len(list))
 	for _, lf := range list {
 		_, err := h.d.Store.GetFile(r.Context(), lf.Provider, lf.TorrentID, lf.FileID)
-		out = append(out, localEntry{LocalFile: lf, InLibrary: err == nil})
+		e := localEntry{LocalFile: lf, InLibrary: err == nil}
+		if h.d.Downloads != nil {
+			e.MoveTo, _ = h.d.Downloads.MoveTarget(lf)
+		}
+		out = append(out, e)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -116,6 +124,40 @@ func (h *handlers) localRemove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "removed"})
 }
 
+// localMove is POST /api/local/move {provider, torrent_id, file_id}: move a
+// finished copy saved outside the download folder into it, in the
+// background.
+func (h *handlers) localMove(w http.ResponseWriter, r *http.Request) {
+	if h.d.Downloads == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "downloads are not enabled"})
+		return
+	}
+	var body struct {
+		Provider  string `json:"provider"`
+		TorrentID string `json:"torrent_id"`
+		FileID    string `json:"file_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxFormBytes)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	if _, err := provider.ParseName(body.Provider); err != nil || !validID(body.TorrentID) || !validID(body.FileID) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider, torrent_id and file_id are required"})
+		return
+	}
+	err := h.d.Downloads.Move(r.Context(), body.Provider, body.TorrentID, body.FileID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no local copy for that file"})
+	case errors.Is(err, download.ErrNotMovable):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	default:
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "moving"})
+	}
+}
+
 // downloadFile is GET /api/download/{provider}/{torrentID}/{fileID}: save a
 // library file to the viewer's device. A finished local copy is served from
 // disk; otherwise the debrid file is proxied through jellybird, which keeps
@@ -130,7 +172,7 @@ func (h *handlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 	}
 	cf, cfErr := h.d.Store.GetFile(r.Context(), p, t, f)
 	lf, lfErr := h.d.Store.GetLocal(r.Context(), p, t, f)
-	haveLocal := lfErr == nil && lf.Status == store.LocalDone && lf.LocalPath != ""
+	haveLocal := lfErr == nil && lf.HasCopy() && lf.LocalPath != ""
 	if cfErr != nil && !haveLocal {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

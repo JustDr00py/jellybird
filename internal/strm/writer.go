@@ -66,10 +66,13 @@ func isExtra(path string) bool {
 
 // Writer manages the on-disk STRM tree and its database mapping.
 type Writer struct {
-	cfg   config.Library
-	sync  config.Sync
-	store *store.Store
-	log   *slog.Logger
+	cfg  config.Library
+	sync config.Sync
+	// localRoot is where "keep local" copies go (downloads.path, or the
+	// library itself).
+	localRoot string
+	store     *store.Store
+	log       *slog.Logger
 	// externalBase is the gateway base URL written into .strm files.
 	externalBase string
 	// token is the server secret; .strm URLs carry a per-file signature
@@ -82,6 +85,7 @@ func NewWriter(cfg config.Config, st *store.Store, log *slog.Logger, externalBas
 	return &Writer{
 		cfg:          cfg.Library,
 		sync:         cfg.Sync,
+		localRoot:    cfg.Downloads.Root(cfg.Library),
 		store:        st,
 		log:          log,
 		externalBase: strings.TrimSuffix(externalBase, "/"),

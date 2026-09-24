@@ -1,0 +1,171 @@
+{{template "head" .}}
+<div class="card">
+  <h2 style="margin-top:0">Local files</h2>
+  <p class="muted" style="margin-top:0">Files downloaded to the server so they play without the debrid service. Removing one deletes it from disk; if it's still in your debrid cloud the title goes back to streaming.</p>
+  {{if not .Enabled}}
+  <p class="err">Downloads are disabled in the config, so local files can't be managed here.</p>
+  {{else}}
+  <p class="muted">Saving to {{if .DownloadsPath}}<code>{{.DownloadsPath}}</code>{{else}}the library, next to the <code>.strm</code> files{{end}} (<code>downloads.path</code>).</p>
+  <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); margin-bottom:1rem">
+    <div><div class="muted">On disk</div><strong id="sdone">—</strong></div>
+    <div><div class="muted">In progress</div><strong id="sactive">—</strong></div>
+    <div><div class="muted">Failed</div><strong id="sfailed">—</strong></div>
+    <div><div class="muted">Free space</div><strong>{{if .FreeBytes}}{{fmtSize .FreeBytes}}{{else}}unknown{{end}}</strong>
+      {{if .ReserveBytes}}<div class="muted" style="font-size:.8rem">keeps {{fmtSize .ReserveBytes}} free</div>{{end}}</div>
+  </div>
+  <div class="row" style="margin-bottom:.8rem">
+    <input type="search" id="fname" placeholder="Search file or torrent name…" style="flex:1">
+    <select id="fstatus">
+      <option value="">All statuses</option>
+      <option value="done">On disk</option>
+      <option value="active">Queued / downloading</option>
+      <option value="failed">Failed</option>
+      <option value="only">Only copy (gone from cloud)</option>
+      {{if .DownloadsPath}}<option value="movable">Outside download folder</option>{{end}}
+    </select>
+  </div>
+  <div class="row" style="margin-bottom:.8rem">
+    {{if .DownloadsPath}}<button class="ghost" id="mvsel" data-path="{{.DownloadsPath}}" disabled>Move selected</button>{{end}}
+    <button class="ghost" id="rmsel" disabled>Remove selected</button>
+    <button class="ghost" id="retryfailed" hidden>Retry failed</button>
+    <button class="ghost" id="clearfailed" hidden>Clear failed</button>
+    <span class="muted" id="msg"></span>
+  </div>
+  <div style="overflow-x:auto">
+  <table id="localtbl">
+    <thead><tr><th><input type="checkbox" id="selall" title="Select all shown"></th><th>File</th><th>Provider</th><th>Status</th><th>Size</th><th></th></tr></thead>
+    <tbody><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+
+{{if .Enabled}}
+<script>
+let localData = [];
+const selected = new Set();
+const isActive = lf => lf.status === "queued" || lf.status === "downloading" || lf.status === "moving";
+const fileName = lf => (lf.local_path || lf.file_path).split("/").pop();
+
+function filtered() {
+  const name = $("#fname").value.trim().toLowerCase();
+  const status = $("#fstatus").value;
+  return localData.filter(lf =>
+    (!name || (lf.local_path || lf.file_path).toLowerCase().includes(name) || lf.torrent_name.toLowerCase().includes(name)) &&
+    (!status ||
+      (status === "active" ? isActive(lf) :
+       status === "only" ? !lf.in_library :
+       status === "movable" ? !!lf.move_to :
+       lf.status === status)));
+}
+
+function render() {
+  const done = localData.filter(lf => lf.status === "done");
+  const failed = localData.filter(lf => lf.status === "failed");
+  $("#sdone").textContent = `${done.length} · ${fmtSize(done.reduce((n, lf) => n + lf.size_bytes, 0))}`;
+  $("#sactive").textContent = localData.filter(isActive).length;
+  $("#sfailed").textContent = failed.length;
+  $("#retryfailed").hidden = $("#clearfailed").hidden = failed.length === 0;
+
+  // Drop selections for entries that no longer exist.
+  const keys = new Set(localData.map(lf => lkey(lf.provider, lf.torrent_id, lf.file_id)));
+  for (const k of selected) if (!keys.has(k)) selected.delete(k);
+
+  const rows = filtered();
+  $("#localtbl tbody").innerHTML = rows.length ? rows.map(lf => {
+    const k = lkey(lf.provider, lf.torrent_id, lf.file_id);
+    const only = (lf.in_library ? "" : " " + pill("only copy — gone from cloud", "blue")) +
+      (lf.move_to ? " " + pill("in library folder", "warn") : "");
+    const size = lf.status === "downloading" || lf.status === "moving" ? `${fmtSize(lf.bytes_done)} / ${fmtSize(lf.size_bytes)}` : fmtSize(lf.size_bytes);
+    return `<tr>
+      <td><input type="checkbox" class="sel" data-key="${esc(k)}" ${selected.has(k) ? "checked" : ""}></td>
+      <td><div class="trunc" style="max-width:340px" title="${esc(lf.local_path || lf.file_path)}">${esc(fileName(lf))}${only}</div>
+        <div class="muted trunc" style="max-width:340px; font-size:.8rem" title="${esc(lf.torrent_name)}">${esc(lf.torrent_name)}</div></td>
+      <td>${pill(lf.provider, "blue")}</td>
+      <td>${localStatus(lf)}${lf.error ? ` <span class="muted">${esc(lf.error)}</span>` : ""}</td>
+      <td class="muted" style="white-space:nowrap">${esc(size)}</td>
+      <td class="actions">${localActions(lf.provider, lf.torrent_id, lf.file_id, lf)}</td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="muted">${localData.length ? "No matches." : "Nothing saved locally yet — use <strong>Keep local</strong> on the Library or Cloud page."}</td></tr>`;
+
+  $$("#localtbl input.sel").forEach(cb => cb.onchange = () => {
+    cb.checked ? selected.add(cb.dataset.key) : selected.delete(cb.dataset.key);
+    updateSel();
+  });
+  wireLocalButtons($("#localtbl"), load);
+  updateSel();
+}
+
+function updateSel() {
+  const shown = filtered().map(lf => lkey(lf.provider, lf.torrent_id, lf.file_id));
+  $("#selall").checked = shown.length > 0 && shown.every(k => selected.has(k));
+  $("#rmsel").disabled = selected.size === 0;
+  $("#rmsel").textContent = selected.size ? `Remove selected (${selected.size})` : "Remove selected";
+  const mv = $("#mvsel");
+  if (mv) {
+    const n = localData.filter(lf => lf.move_to && selected.has(lkey(lf.provider, lf.torrent_id, lf.file_id))).length;
+    mv.disabled = n === 0;
+    mv.textContent = n ? `Move selected (${n})` : "Move selected";
+  }
+}
+
+let timer = null;
+async function load() {
+  clearTimeout(timer);
+  try { localData = await api("/api/local"); render(); }
+  catch (e) { $("#msg").textContent = e.message; }
+  timer = setTimeout(load, localData.some(isActive) ? 3000 : 20000);
+}
+
+// each runs fn over list one entry at a time, reporting progress and
+// per-file failures in #msg.
+async function each(list, verb, fn) {
+  let ok = 0; const errs = [];
+  for (const lf of list) {
+    $("#msg").textContent = `${verb} ${ok + errs.length + 1} of ${list.length}…`;
+    try { await fn(lf); ok++; }
+    catch (e) { errs.push(`${fileName(lf)}: ${e.message}`); }
+  }
+  $("#msg").textContent = `${verb} ${ok} of ${list.length}.` + (errs.length ? " Failed: " + errs.join("; ") : "");
+  load();
+}
+const removeOne = lf => api("/api/local?" + localQS(lf.provider, lf.torrent_id, lf.file_id), {method:"DELETE"});
+const moveOne = lf => api("/api/local/move", {method:"POST", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({provider: lf.provider, torrent_id: lf.torrent_id, file_id: lf.file_id})});
+const retryOne = lf => api("/api/local", {method:"POST", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({provider: lf.provider, torrent_id: lf.torrent_id, file_id: lf.file_id})});
+
+$("#selall").onchange = () => {
+  filtered().forEach(lf => {
+    const k = lkey(lf.provider, lf.torrent_id, lf.file_id);
+    $("#selall").checked ? selected.add(k) : selected.delete(k);
+  });
+  render();
+};
+
+$("#rmsel").onclick = async () => {
+  const list = localData.filter(lf => selected.has(lkey(lf.provider, lf.torrent_id, lf.file_id)));
+  const onDisk = list.filter(lf => lf.status === "done");
+  const only = onDisk.filter(lf => !lf.in_library).length;
+  let q = `Remove ${list.length} item(s)? ${onDisk.length} file(s) (${fmtSize(onDisk.reduce((n, lf) => n + lf.size_bytes, 0))}) will be deleted from the server; titles still in your debrid cloud go back to streaming. Active downloads are cancelled.`;
+  if (only) q += `\n\n${only} of them are the ONLY copy left (gone from your debrid cloud) and will be lost for good.`;
+  if (!confirm(q)) return;
+  $("#rmsel").disabled = true;
+  selected.clear();
+  await each(list, "Removed", removeOne);
+};
+
+if ($("#mvsel")) $("#mvsel").onclick = async () => {
+  const list = localData.filter(lf => lf.move_to && selected.has(lkey(lf.provider, lf.torrent_id, lf.file_id)));
+  if (!confirm(`Move ${list.length} file(s) (${fmtSize(list.reduce((n, lf) => n + lf.size_bytes, 0))}) to ${$("#mvsel").dataset.path}? They copy one at a time and keep playing from the old location until each finishes.`)) return;
+  $("#mvsel").disabled = true;
+  selected.clear();
+  await each(list, "Queued move for", moveOne);
+};
+$("#clearfailed").onclick = () => each(localData.filter(lf => lf.status === "failed"), "Cleared", removeOne);
+$("#retryfailed").onclick = () => each(localData.filter(lf => lf.status === "failed"), "Re-queued", retryOne);
+
+$$("#fname, #fstatus").forEach(el => el.addEventListener("input", render));
+load();
+</script>
+{{end}}
+{{template "foot" .}}

@@ -86,6 +86,7 @@ func Mount(r chi.Router, d Deps) {
 			api.Get("/local", h.localList)
 			api.Post("/local", h.localAdd)
 			api.Delete("/local", h.localRemove)
+			api.Post("/local/move", h.localMove)
 			api.Get("/download/{provider}/{torrentID}/{fileID}", h.downloadFile)
 		})
 
@@ -95,6 +96,7 @@ func Mount(r chi.Router, d Deps) {
 			ui.Get("/", h.index)
 			ui.Get("/search", h.searchPage)
 			ui.Get("/cloud", h.cloudPage)
+			ui.Get("/local", h.localPage)
 			ui.Get("/settings", h.settingsPage)
 		})
 	})

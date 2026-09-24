@@ -71,6 +71,7 @@
     <a href="/" data-page="home">Library</a>
     <a href="/search" data-page="search">Search &amp; Add</a>
     <a href="/cloud" data-page="cloud">Cloud</a>
+    <a href="/local" data-page="local">Local files</a>
     <a href="/settings" data-page="settings">Settings</a>
   </nav>
   <span class="muted" style="margin-left:auto" id="syncinfo"></span>
@@ -105,6 +106,68 @@ function fmtSize(n) {
   const u = ["B","KB","MB","GB","TB"]; let i = 0;
   while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
   return n.toFixed(i > 1 ? 1 : 0) + " " + u[i];
+}
+
+// --- local copies ("keep local" + save to device), shared by Library and
+// Local files. onChange re-renders after a button changes something.
+const lkey = (p, t, f) => `${p}/${t}/${f}`;
+const localQS = (p, t, f) => new URLSearchParams({provider: p, torrent_id: t, file_id: f});
+const saveURL = (p, t, f) => `/api/download/${encodeURIComponent(p)}/${encodeURIComponent(t)}/${encodeURIComponent(f)}`;
+const LOCAL_RM_CONFIRM = "Delete the local copy from the server? If it's still in your debrid cloud it goes back to streaming.";
+
+function localStatus(lf) {
+  if (!lf) return "";
+  switch (lf.status) {
+    case "done": return pill("local ✓", "ok");
+    case "queued": return pill("queued", "blue");
+    case "downloading":
+    case "moving": {
+      const pct = lf.size_bytes ? Math.floor(lf.bytes_done * 100 / lf.size_bytes) : 0;
+      return pill(`${lf.status === "moving" ? "moving " : ""}${pct}%`, "warn");
+    }
+    case "failed": return `<span title="${esc(lf.error)}">${pill("failed", "err")}</span>`;
+  }
+  return "";
+}
+
+function localActions(p, t, f, lf) {
+  const d = `data-provider="${esc(p)}" data-torrent-id="${esc(t)}" data-file-id="${esc(f)}"`;
+  const save = `<a class="ghostlink sm" href="${esc(saveURL(p, t, f))}" title="Download this file to this device">Save</a>`;
+  if (!lf) return `<button class="ghost sm localadd" ${d} title="Download to the server for offline playback">Keep local</button> ${save}`;
+  if (lf.status === "failed") return `<button class="ghost sm localadd" ${d}>Retry</button> <button class="ghost sm localrm" ${d} title="Forget">✕</button>`;
+  const rm = `<button class="ghost sm localrm" ${d} data-confirm="${lf.in_library === false ? "only" : "1"}" title="Delete the local file; the title goes back to streaming">Remove local</button>`;
+  const move = lf.move_to ? `<button class="ghost sm localmv" ${d} title="Move to ${esc(lf.move_to)}">Move</button> ` : "";
+  if (lf.status === "done" || lf.status === "moving") return `${move}${rm} ${save}`;
+  return `<button class="ghost sm localrm" ${d} title="Cancel download">Cancel</button>`;
+}
+
+function wireLocalButtons(root, onChange) {
+  $$("button.localadd", root).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api("/api/local", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({provider: b.dataset.provider, torrent_id: b.dataset.torrentId, file_id: b.dataset.fileId})});
+    } catch (e) { alert(e.message); }
+    onChange();
+  });
+  $$("button.localmv", root).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api("/api/local/move", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({provider: b.dataset.provider, torrent_id: b.dataset.torrentId, file_id: b.dataset.fileId})});
+    } catch (e) { alert(e.message); }
+    onChange();
+  });
+  $$("button.localrm", root).forEach(b => b.onclick = async () => {
+    const msg = b.dataset.confirm === "only"
+      ? "This is the ONLY copy left — the title is gone from your debrid cloud. Delete it from the server for good?"
+      : LOCAL_RM_CONFIRM;
+    if (b.dataset.confirm && !confirm(msg)) return;
+    b.disabled = true;
+    try { await api("/api/local?" + localQS(b.dataset.provider, b.dataset.torrentId, b.dataset.fileId), {method:"DELETE"}); }
+    catch (e) { alert(e.message); }
+    onChange();
+  });
 }
 </script>
 {{end}}
