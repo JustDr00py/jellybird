@@ -120,6 +120,21 @@ type Client struct {
 // MaxRetries is the number of 429/5xx retries before giving up.
 const MaxRetries = 4
 
+// FreshLister is implemented by providers whose ListCloud may serve a
+// server-side cached listing; ListCloudFresh bypasses that cache.
+type FreshLister interface {
+	ListCloudFresh(ctx context.Context) ([]Torrent, error)
+}
+
+type noServerRetryKey struct{}
+
+// WithoutServerRetries marks ctx so Do returns a 5xx response's error
+// immediately instead of retrying (429s are still retried). Use it for
+// non-idempotent calls whose outcome the caller verifies itself.
+func WithoutServerRetries(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noServerRetryKey{}, true)
+}
+
 // Do performs rate-limited HTTP requests with 429 backoff. The body returned
 // must be closed by the caller.
 func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
@@ -145,8 +160,10 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 		} else if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
 			return resp, nil
 		} else {
-			readAndClose(resp)
-			lastErr = fmt.Errorf("%s %s: HTTP %d", req.Method, req.URL.Redacted(), resp.StatusCode)
+			lastErr = fmt.Errorf("%s %s: HTTP %d%s", req.Method, req.URL.Redacted(), resp.StatusCode, bodySnippet(resp))
+			if resp.StatusCode >= 500 && ctx.Value(noServerRetryKey{}) != nil {
+				return nil, lastErr
+			}
 			if resp.Header.Get("Retry-After") != "" && attempt == 0 {
 				// fallthrough to Backoff below with parsed header
 				if d, perr := parseRetryAfter(resp.Header.Get("Retry-After")); perr == nil {
@@ -167,9 +184,19 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 	return nil, fmt.Errorf("giving up after %d attempts: %w", MaxRetries+1, lastErr)
 }
 
-func readAndClose(resp *http.Response) {
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+// bodySnippet drains and closes resp, returning a short excerpt of its body
+// (prefixed with ": ") so upstream error reasons survive into the error.
+func bodySnippet(resp *http.Response) string {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	_ = resp.Body.Close()
+	s := strings.Join(strings.Fields(string(b)), " ")
+	if len(s) > 300 {
+		s = s[:300] + "…"
+	}
+	if s == "" {
+		return ""
+	}
+	return ": " + s
 }
 
 func parseRetryAfter(v string) (time.Duration, error) {

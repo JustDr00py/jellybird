@@ -210,9 +210,19 @@ func (c *Client) AccountInfo(ctx context.Context) (provider.Account, error) {
 
 // ListCloud implements provider.Provider.
 func (c *Client) ListCloud(ctx context.Context) ([]provider.Torrent, error) {
-	var list []tbTorrent
 	// bypass_cache=false uses TorBox's own 600s cache to save quota.
-	q := url.Values{"bypass_cache": {"false"}}
+	return c.listCloud(ctx, false)
+}
+
+// ListCloudFresh implements provider.FreshLister, skipping TorBox's listing
+// cache so just-deleted torrents are no longer reported.
+func (c *Client) ListCloudFresh(ctx context.Context) ([]provider.Torrent, error) {
+	return c.listCloud(ctx, true)
+}
+
+func (c *Client) listCloud(ctx context.Context, bypassCache bool) ([]provider.Torrent, error) {
+	var list []tbTorrent
+	q := url.Values{"bypass_cache": {strconv.FormatBool(bypassCache)}}
 	if err := c.do(ctx, http.MethodGet, "/torrents/mylist", q, nil, &list); err != nil {
 		return nil, err
 	}

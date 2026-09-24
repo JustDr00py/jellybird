@@ -157,3 +157,20 @@ func TestErrorEnvelope(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestListCloudFreshBypassesCache(t *testing.T) {
+	var got []string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Query().Get("bypass_cache"))
+		writeEnvelope(w, []map[string]any{})
+	})
+	if _, err := c.ListCloud(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListCloudFresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "false,true" {
+		t.Errorf("bypass_cache = %v, want [false true]", got)
+	}
+}

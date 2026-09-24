@@ -305,8 +305,16 @@ func (e *Engine) RemoveTorrent(ctx context.Context, name provider.Name, torrentI
 	if !ok {
 		return fmt.Errorf("provider %q not enabled", name)
 	}
-	if err := p.Delete(ctx, torrentID); err != nil {
-		return err
+	// TorBox in particular can answer a delete with HTTP 500
+	// (DATABASE_ERROR) after actually removing the torrent, so a failed
+	// delete is not retried blindly: the cloud listing decides the outcome.
+	if err := p.Delete(provider.WithoutServerRetries(ctx), torrentID); err != nil {
+		gone, verr := torrentGone(ctx, p, torrentID)
+		if verr != nil || !gone {
+			e.log.Warn("cloud delete failed", "provider", name, "torrent", torrentID, "err", err, "verify_err", verr)
+			return err
+		}
+		e.log.Info("cloud delete reported an error but the torrent is gone", "provider", name, "torrent", torrentID, "err", err)
 	}
 	e.invalidateCloudCache(name)
 	if err := e.writer.RemoveTorrent(ctx, name, torrentID); err != nil {
@@ -316,6 +324,25 @@ func (e *Engine) RemoveTorrent(ctx context.Context, name provider.Name, torrentI
 		e.log.Warn("hint cleanup after delete failed", "provider", name, "torrent", torrentID, "err", err)
 	}
 	return nil
+}
+
+// torrentGone reports whether torrentID is absent from the provider's cloud,
+// preferring an uncached listing when the provider offers one.
+func torrentGone(ctx context.Context, p provider.Provider, torrentID string) (bool, error) {
+	list := p.ListCloud
+	if fl, ok := p.(provider.FreshLister); ok {
+		list = fl.ListCloudFresh
+	}
+	torrents, err := list(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, t := range torrents {
+		if t.ID == torrentID {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // WipeLibrary clears every tracked STRM file and its database row (but not
