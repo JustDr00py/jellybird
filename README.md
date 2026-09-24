@@ -179,7 +179,7 @@ All three servers play STRM the same way — point them at the library root.
 |---|---|
 | **Jellyfin** | Libraries → Add → `/media/Movies` + `/media/Shows`. Set "Real time monitoring" on. |
 | **Emby** | Libraries → Add Movies/TV from the same folders. |
-| **Silo** | Add `/media/Movies` + `/media/Shows` as library sources in the web UI. |
+| **Silo** | Set `SILO_SECRET_KEY` and `SILO_POSTGRES_PASSWORD` in `.env`, run `docker compose --profile silo up -d` (starts Silo with its PostgreSQL and Redis), open `http://<host>:8090`, then add `/media/Movies` + `/media/Shows` as library sources. |
 
 > **Docker note:** the media server and jellybird must reach each other.
 > Set `server.external_url` to a hostname the *server* can resolve, e.g.
