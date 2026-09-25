@@ -77,6 +77,10 @@ func (h *handlers) searchPage(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, http.StatusOK, "search.html", map[string]any{})
 }
 
+func (h *handlers) discoverPage(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, http.StatusOK, "discover.html", map[string]any{})
+}
+
 func (h *handlers) cloudPage(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, http.StatusOK, "cloud.html", map[string]any{})
 }

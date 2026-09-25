@@ -181,3 +181,41 @@ func TestRequests(t *testing.T) {
 		t.Errorf("detail = %q", reqs[0].Detail)
 	}
 }
+
+func TestHintTMDBIDsAndStrmPaths(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	for _, h := range []Hint{
+		{Provider: "realdebrid", TorrentID: "A", Kind: "movie", Title: "Dune", TMDBID: "438631"},
+		{Provider: "realdebrid", TorrentID: "B", Kind: "tv", Title: "Severance", Season: 1, TMDBID: "95396"},
+		{Provider: "torbox", TorrentID: "C", Kind: "tv", Title: "Severance", Season: 2, TMDBID: "95396"},
+		{Provider: "torbox", TorrentID: "D", Kind: "movie", Title: "Old hint"},
+	} {
+		if err := s.SetHint(ctx, h); err != nil {
+			t.Fatal(err)
+		}
+	}
+	movies, shows, err := s.HintTMDBIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(movies) != 1 || !movies["438631"] || len(shows) != 1 || !shows["95396"] {
+		t.Fatalf("movies=%v shows=%v", movies, shows)
+	}
+
+	for _, f := range []CloudFile{
+		{Provider: "realdebrid", TorrentID: "A", FileID: "1", TorrentName: "Dune", FilePath: "a.mkv", StrmPath: "/media/Movies/Dune (2021)/Dune (2021).strm"},
+		{Provider: "realdebrid", TorrentID: "A", FileID: "2", TorrentName: "Dune", FilePath: "sample.mkv"},
+	} {
+		if _, err := s.UpsertFile(ctx, f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths, err := s.ListStrmPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != "/media/Movies/Dune (2021)/Dune (2021).strm" {
+		t.Fatalf("paths = %v", paths)
+	}
+}

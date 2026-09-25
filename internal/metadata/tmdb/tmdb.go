@@ -40,16 +40,17 @@ func (c *Client) SetBaseURL(u string) { c.baseURL = strings.TrimSuffix(u, "/") }
 
 // Result is one media search hit.
 type Result struct {
-	ID           int    `json:"id"`
-	Title        string `json:"title"`            // movies
-	Name         string `json:"name"`             // tv
-	OriginalTitle string `json:"original_title"`
-	OriginalName string `json:"original_name"`
-	ReleaseDate  string `json:"release_date"`     // movies
-	FirstAirDate string `json:"first_air_date"`   // tv
-	MediaType    string `json:"media_type"`
-	Overview     string `json:"overview"`
-	PosterPath   string `json:"poster_path"`
+	ID            int     `json:"id"`
+	Title         string  `json:"title"` // movies
+	Name          string  `json:"name"`  // tv
+	OriginalTitle string  `json:"original_title"`
+	OriginalName  string  `json:"original_name"`
+	ReleaseDate   string  `json:"release_date"`   // movies
+	FirstAirDate  string  `json:"first_air_date"` // tv
+	MediaType     string  `json:"media_type"`
+	Overview      string  `json:"overview"`
+	PosterPath    string  `json:"poster_path"`
+	VoteAverage   float64 `json:"vote_average"`
 }
 
 // Year extracts the release year.
@@ -81,9 +82,9 @@ func (c *Client) Search(ctx context.Context, query string) ([]Result, error) {
 		Results []Result `json:"results"`
 	}
 	err := c.get(ctx, "/search/multi", url.Values{
-		"query":              {query},
-		"include_adult":      {"false"},
-		"language":           {c.language},
+		"query":         {query},
+		"include_adult": {"false"},
+		"language":      {c.language},
 	}, &out)
 	if err != nil {
 		return nil, err
@@ -96,6 +97,91 @@ func (c *Client) Search(ctx context.Context, query string) ([]Result, error) {
 		}
 	}
 	return filtered, nil
+}
+
+// Page is one page of a browsable TMDB list.
+type Page struct {
+	Results    []Result `json:"results"`
+	Page       int      `json:"page"`
+	TotalPages int      `json:"total_pages"`
+}
+
+// Lists maps each media type to the named lists Browse accepts, in display
+// order, with their TMDB paths. "trending" is weekly trending.
+var Lists = map[string][]struct{ Name, Label, Path string }{
+	"movie": {
+		{"trending", "Trending", "/trending/movie/week"},
+		{"popular", "Popular", "/movie/popular"},
+		{"now_playing", "Now playing", "/movie/now_playing"},
+		{"upcoming", "Upcoming", "/movie/upcoming"},
+		{"top_rated", "Top rated", "/movie/top_rated"},
+	},
+	"tv": {
+		{"trending", "Trending", "/trending/tv/week"},
+		{"popular", "Popular", "/tv/popular"},
+		{"on_the_air", "On the air", "/tv/on_the_air"},
+		{"airing_today", "Airing today", "/tv/airing_today"},
+		{"top_rated", "Top rated", "/tv/top_rated"},
+	},
+}
+
+// Browse fetches one page of a named list (see Lists) for mediaType "movie"
+// or "tv". A non-zero genreID ignores list and uses TMDB's discover endpoint
+// instead, sorted by popularity.
+func (c *Client) Browse(ctx context.Context, mediaType, list string, genreID, page int) (Page, error) {
+	if mediaType != "movie" && mediaType != "tv" {
+		return Page{}, fmt.Errorf("tmdb: unknown media type %q", mediaType)
+	}
+	if page < 1 {
+		page = 1
+	}
+	q := url.Values{"language": {c.language}, "page": {fmt.Sprint(page)}}
+	var path string
+	if genreID > 0 {
+		path = "/discover/" + mediaType
+		q.Set("with_genres", fmt.Sprint(genreID))
+		q.Set("sort_by", "popularity.desc")
+		q.Set("include_adult", "false")
+	} else {
+		for _, l := range Lists[mediaType] {
+			if l.Name == list {
+				path = l.Path
+			}
+		}
+		if path == "" {
+			return Page{}, fmt.Errorf("tmdb: unknown %s list %q", mediaType, list)
+		}
+	}
+	var out Page
+	if err := c.get(ctx, path, q, &out); err != nil {
+		return Page{}, err
+	}
+	// Only /trending sets media_type; fill it in so callers can treat
+	// every list alike.
+	for i := range out.Results {
+		out.Results[i].MediaType = mediaType
+	}
+	return out, nil
+}
+
+// Genre is one TMDB genre.
+type Genre struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Genres lists the genres TMDB uses for mediaType ("movie" or "tv").
+func (c *Client) Genres(ctx context.Context, mediaType string) ([]Genre, error) {
+	if mediaType != "movie" && mediaType != "tv" {
+		return nil, fmt.Errorf("tmdb: unknown media type %q", mediaType)
+	}
+	var out struct {
+		Genres []Genre `json:"genres"`
+	}
+	if err := c.get(ctx, "/genre/"+mediaType+"/list", url.Values{"language": {c.language}}, &out); err != nil {
+		return nil, err
+	}
+	return out.Genres, nil
 }
 
 // Season is one entry from a TV show's season list.

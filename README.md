@@ -28,7 +28,8 @@ pattern — no FUSE mounts, no rclone, no arr stack required.
 3. **Search & add** — the built-in dashboard searches TMDB + Torrentio,
    marks which torrents are *instantly available* on your debrid, and adds
    them with one click. Cached content shows up in your library within
-   seconds.
+   seconds. The **Discover** page browses TMDB's trending, popular and
+   per-genre movies and shows, labelling what's already in your library.
 4. **Watchlist automation** *(optional)* — point jellybird at Jellyseerr and
    approved requests are downloaded to your debrid and marked Available
    automatically.

@@ -305,6 +305,48 @@ func (s *Store) HintExists(ctx context.Context, kind, tmdbID string, season, epi
 	return exists, err
 }
 
+// HintTMDBIDs returns the TMDB ids that have at least one hint, split by
+// kind — the bulk form of HintExists for pages that label many titles at
+// once. Hints without a TMDB id are skipped.
+func (s *Store) HintTMDBIDs(ctx context.Context) (movies, shows map[string]bool, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT kind, tmdb_id FROM hints WHERE tmdb_id != ''`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	movies, shows = map[string]bool{}, map[string]bool{}
+	for rows.Next() {
+		var kind, id string
+		if err := rows.Scan(&kind, &id); err != nil {
+			return nil, nil, err
+		}
+		if kind == "tv" {
+			shows[id] = true
+		} else {
+			movies[id] = true
+		}
+	}
+	return movies, shows, rows.Err()
+}
+
+// ListStrmPaths returns the .strm path of every tracked file that has one.
+func (s *Store) ListStrmPaths(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT strm_path FROM files WHERE strm_path != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ListFiles returns all tracked files, optionally filtered by provider.
 func (s *Store) ListFiles(ctx context.Context, provider string) ([]CloudFile, error) {
 	var (

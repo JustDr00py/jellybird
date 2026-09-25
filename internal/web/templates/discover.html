@@ -1,0 +1,186 @@
+{{template "head" .}}
+<style>
+  .seg { display:inline-flex; background:#0f1115; border:1px solid #2c3446; border-radius:8px; padding:2px; }
+  .seg button { background:transparent; color:#9aa3b5; padding:.4rem .9rem; border-radius:6px; }
+  .seg button.on { background:#2b5fd9; color:#fff; }
+  select { background:#0f1115; color:#e2e6ee; border:1px solid #2c3446; border-radius:8px; padding:.5rem .6rem; }
+  .media { position:relative; }
+  .media .rating { position:absolute; top:1.2rem; right:1.2rem; background:rgba(15,17,21,.85);
+                   border-radius:6px; padding:.1rem .4rem; font-size:.75rem; }
+  .media.have img { opacity:.55; }
+  #more { display:block; margin:1rem auto 0; }
+</style>
+<div class="card">
+  <div class="row">
+    <div class="seg" role="group" aria-label="Media type">
+      <button data-type="movie">Movies</button>
+      <button data-type="tv">TV shows</button>
+    </div>
+    <select id="list" aria-label="List"></select>
+    <select id="genre" aria-label="Genre"><option value="">Any genre</option></select>
+    <label class="row muted" style="gap:.35rem; margin-left:auto">
+      <input type="checkbox" id="hide"> Hide what I have
+    </label>
+  </div>
+  <div class="err" id="err"></div>
+  <div class="grid" id="results" style="margin-top:.4rem"></div>
+  <p class="muted" id="status"></p>
+  <button class="ghost" id="more" hidden>Load more</button>
+</div>
+
+{{template "addflow" .}}
+<script>
+const params = new URLSearchParams(location.search);
+const state = {
+  type: params.get("type") === "tv" ? "tv" : "movie",
+  list: params.get("list") || "trending",
+  genre: params.get("genre") || "",
+  page: 0, totalPages: 1, loading: false,
+};
+let hideHave = false;
+try { hideHave = localStorage.getItem("discover.hide") === "1"; } catch {}
+$("#hide").checked = hideHave;
+
+// cards maps "type:id" to each rendered card, so an add can relabel it.
+const cards = new Map();
+
+function syncURL() {
+  const p = {type: state.type};
+  if (state.genre) p.genre = state.genre; else p.list = state.list;
+  history.replaceState(null, "", "/discover" + q(p));
+}
+
+async function loadLists() {
+  $$(".seg button").forEach(b => b.classList.toggle("on", b.dataset.type === state.type));
+  $("#err").textContent = "";
+  try {
+    const {lists, genres} = await api("/api/discover/lists" + q({type: state.type}));
+    if (!lists.some(l => l.name === state.list)) state.list = "trending";
+    $("#list").innerHTML = lists.map(l =>
+      `<option value="${esc(l.name)}"${l.name === state.list ? " selected" : ""}>${esc(l.label)}</option>`).join("");
+    if (!genres.some(g => String(g.id) === state.genre)) state.genre = "";
+    $("#genre").innerHTML = `<option value="">Any genre</option>` + genres.map(g =>
+      `<option value="${esc(g.id)}"${String(g.id) === state.genre ? " selected" : ""}>${esc(g.name)}</option>`).join("");
+    // A genre browses TMDB's discover endpoint, which has no named lists.
+    $("#list").disabled = !!state.genre;
+  } catch (e) { $("#err").textContent = e.message; return; }
+  reset();
+}
+
+function reset() {
+  state.page = 0; state.totalPages = 1;
+  cards.clear();
+  $("#results").innerHTML = "";
+  $("#err").textContent = "";
+  syncURL();
+  loadMore();
+}
+
+function badge(r) {
+  if (!r.in_library) return "";
+  const eps = r.media_type === "tv" && r.episodes ? ` · ${r.episodes} ep${r.episodes === 1 ? "" : "s"}` : "";
+  return `<div class="have-badge" style="margin-top:.25rem">${pill("In library" + eps, "ok")}</div>`;
+}
+
+function render(r) {
+  const title = r.title || r.name || r.original_title || r.original_name || "Unknown";
+  const year = (r.release_date || r.first_air_date || "").slice(0, 4);
+  const poster = r.poster_path
+    ? `<img src="https://image.tmdb.org/t/p/w300${esc(r.poster_path)}" alt="" loading="lazy">`
+    : `<div style="aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;font-size:2.5rem">${r.media_type === "tv" ? "📺" : "🎬"}</div>`;
+  const el = document.createElement("div");
+  el.className = "media" + (r.in_library ? " have" : "");
+  el.title = r.overview || "";
+  el.innerHTML = `
+    ${poster}
+    ${r.vote_average ? `<span class="rating">★ ${esc(r.vote_average.toFixed(1))}</span>` : ""}
+    <div class="t">${esc(title)}${year ? " (" + esc(year) + ")" : ""}</div>
+    ${badge(r)}`;
+  el.onclick = () => openStreams(r, title);
+  el.hidden = hideHave && r.in_library;
+  cards.set(`${r.media_type}:${r.id}`, {el, r});
+  return el;
+}
+
+// loadMore appends the next page. With "hide what I have" on, a page can
+// come back entirely hidden, so keep fetching (up to a few pages) until
+// something new is visible.
+async function loadMore() {
+  if (state.loading) return;
+  state.loading = true;
+  $("#more").hidden = true;
+  $("#status").textContent = "Loading…";
+  const want = state.type, list = state.list, genre = state.genre;
+  let stale = false;
+  try {
+    let shown = 0;
+    for (let tries = 0; tries < 5 && shown < 8 && state.page < state.totalPages; tries++) {
+      const p = {type: want, page: state.page + 1};
+      if (genre) p.genre = genre; else p.list = list;
+      const res = await api("/api/discover" + q(p));
+      // The user switched lists mid-fetch: drop this page and load theirs.
+      if (want !== state.type || list !== state.list || genre !== state.genre) { stale = true; break; }
+      state.page = res.page; state.totalPages = res.total_pages;
+      for (const r of res.results) {
+        if (cards.has(`${r.media_type}:${r.id}`)) continue; // TMDB pages overlap as rankings shift
+        const el = render(r);
+        $("#results").appendChild(el);
+        if (!el.hidden) shown++;
+      }
+    }
+    updateStatus();
+  } catch (e) {
+    $("#err").textContent = e.message;
+    $("#status").textContent = "";
+  } finally {
+    state.loading = false;
+    $("#more").hidden = state.page >= state.totalPages || !!$("#err").textContent;
+  }
+  if (stale) loadMore();
+}
+
+function updateStatus() {
+  const all = [...cards.values()];
+  const have = all.filter(c => c.r.in_library).length;
+  $("#status").textContent = all.length
+    ? `${all.length} titles · ${have} already in your library` + (hideHave && have ? " (hidden)" : "")
+    : "Nothing here.";
+}
+
+// A cached add synced straight into the library: relabel its card rather
+// than leaving the page.
+addFlowDone = (mediaType, tmdbID) => {
+  const c = cards.get(`${mediaType}:${tmdbID}`);
+  if (!c) return;
+  if (mediaType === "tv") c.r.episodes = (c.r.episodes || 0) + 1;
+  else if (c.r.in_library) return;
+  c.r.in_library = true;
+  c.el.classList.add("have");
+  c.el.querySelector(".have-badge")?.remove();
+  c.el.insertAdjacentHTML("beforeend", badge(c.r));
+  updateStatus();
+};
+
+$$(".seg button").forEach(b => b.onclick = () => {
+  if (b.dataset.type === state.type) return;
+  state.type = b.dataset.type; state.genre = "";
+  loadLists();
+});
+$("#list").onchange = e => { state.list = e.target.value; reset(); };
+$("#genre").onchange = e => {
+  state.genre = e.target.value;
+  $("#list").disabled = !!state.genre;
+  reset();
+};
+$("#hide").onchange = e => {
+  hideHave = e.target.checked;
+  try { localStorage.setItem("discover.hide", hideHave ? "1" : "0"); } catch {}
+  for (const {el, r} of cards.values()) el.hidden = hideHave && r.in_library;
+  updateStatus();
+  if (hideHave && !$$("#results .media").some(el => !el.hidden)) loadMore();
+};
+$("#more").onclick = loadMore;
+
+loadLists();
+</script>
+{{template "foot" .}}
