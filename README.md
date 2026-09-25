@@ -2,13 +2,13 @@
 
 **One debrid gateway for every media server.** jellybird bridges
 [Real-Debrid](https://real-debrid.com) and [TorBox](https://torbox.app) into
-**Jellyfin**, **Emby** and **Silo** using the battle-tested *STRM + resolver*
+**Jellyfin** and **Emby** using the battle-tested *STRM + resolver*
 pattern — no FUSE mounts, no rclone, no arr stack required.
 
 ```
             your debrid cloud                jellybird                    your media server
    ┌──────────────────────────┐    ┌────────────────────────────┐    ┌──────────────────────┐
-   │ Real-Debrid  │  TorBox   │───▶│ cloud sync  →  .strm files │───▶│ Jellyfin / Emby /Silo│
+   │ Real-Debrid  │  TorBox   │───▶│ cloud sync  →  .strm files │───▶│ Jellyfin / Emby      │
    │  (cached torrents)       │◀───│ search+add  ←  web UI      │    │ plays .strm natively │
    └──────────────────────────┘    │ /stream/*   →  302 → CDN   │◀───│ on playback          │
                                    └────────────────────────────┘    └──────────────────────┘
@@ -173,13 +173,12 @@ Library page, and please open an issue with the file name.
 
 ## Setup per media server
 
-All three servers play STRM the same way — point them at the library root.
+Both servers play STRM the same way — point them at the library root.
 
 | Server | Setup |
 |---|---|
 | **Jellyfin** | Libraries → Add → `/media/Movies` + `/media/Shows`. Set "Real time monitoring" on. |
 | **Emby** | Libraries → Add Movies/TV from the same folders. |
-| **Silo** | Set `SILO_SECRET_KEY` and `SILO_POSTGRES_PASSWORD` in `.env`, run `docker compose --profile silo up -d` (starts Silo with its PostgreSQL and Redis), open `http://<host>:8090`, then add `/media/Movies` + `/media/Shows` as library sources. |
 
 > **Docker note:** the media server and jellybird must reach each other.
 > Set `server.external_url` to a hostname the *server* can resolve, e.g.
@@ -327,7 +326,7 @@ libraries may get throttled.
 ## FAQ
 
 **Is a STRM a real file?** Yes — a one-line text file containing a URL.
-Jellyfin/Emby/Silo treat it as a video and hand the URL to the player;
+Jellyfin and Emby treat it as a video and hand the URL to the player;
 jellybird redirects to your debrid's CDN on each playback, so links never
 go stale.
 

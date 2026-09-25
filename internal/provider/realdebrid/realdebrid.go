@@ -21,7 +21,7 @@ import (
 const (
 	defaultBaseURL = "https://api.real-debrid.com/rest/1.0"
 	defaultRPM     = 240 // documented limit is 250/min; stay under it
-	providerAgent  = "jellybird/0.1 (debrid gateway for jellyfin/emby/silo)"
+	providerAgent  = "jellybird/0.1 (debrid gateway for jellyfin/emby)"
 )
 
 // Client talks to Real-Debrid. It is safe for concurrent use.

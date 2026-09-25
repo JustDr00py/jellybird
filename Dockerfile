@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/jellybird ./cmd/je
 # Runtime stage: static distroless image.
 #
 # Runs as root by default because jellybird WRITES .strm files into the
-# media volume it shares with Jellyfin/Emby/Silo (fresh volumes are
+# media volume it shares with Jellyfin/Emby (fresh volumes are
 # root-owned). To run unprivileged instead, set `user: "1000:1000"` in
 # docker-compose.yml and pre-chown the media/data volumes.
 FROM gcr.io/distroless/static-debian12

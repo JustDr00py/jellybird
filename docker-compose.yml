@@ -63,87 +63,6 @@ services:
     # Jellyfin reaches jellybird over the compose network using the
     # external_url above; no extra config needed.
 
-  # Optional: Silo (https://siloserver.org) instead of, or next to, Jellyfin.
-  # Off by default; start it with the `silo` profile:
-  #   1. Set SILO_SECRET_KEY and SILO_POSTGRES_PASSWORD in .env
-  #      (`openssl rand -base64 48` for each).
-  #   2. `docker compose --profile silo up -d`
-  #   3. Open http://<host>:8090, finish onboarding, and add /media/Movies
-  #      and /media/Shows as library sources.
-  # Silo reaches jellybird's .strm links over this compose network, so the
-  # default external_url works for server-side playback here too.
-  silo:
-    image: ${SILO_IMAGE:-ghcr.io/silo-server/silo-server:latest}
-    container_name: silo
-    restart: unless-stopped
-    profiles: [silo]
-    environment:
-      MODE: integrated
-      PORT: "8080"
-      JF_PORT: "8096"
-      # Master key for Silo's at-rest secret encryption (32+ chars). Silo
-      # refuses to start without it, and losing it makes stored secrets
-      # unrecoverable, so back it up separately from the database.
-      SECRET_KEY: "${SILO_SECRET_KEY:-}"
-      DATABASE_URL: "postgres://silo:${SILO_POSTGRES_PASSWORD:-silo}@silo-postgres:5432/silo?sslmode=disable"
-      REDIS_URL: redis://silo-redis:6379
-      SILO_PLUGIN_CACHE_DIR: /var/lib/silo/plugins
-      POSTGRES_TUNE: auto
-    ports:
-      - "${SILO_PORT:-8090}:8080"
-      # Silo's Jellyfin-compatible API. Its usual host port 8096 is taken
-      # by the jellyfin service above, so it's published on 8196 instead.
-      - "${SILO_JF_PORT:-8196}:8096"
-      # Audiobookshelf-compatible API.
-      - "${SILO_ABS_PORT:-13378}:13378"
-    volumes:
-      - media:/media:ro
-      - silo-plugins:/var/lib/silo/plugins
-      - silo-artwork:/var/lib/silo/artwork
-      - silo-compat:/var/lib/silo/compat
-      - silo-transcode:/tmp/silo-transcode
-      # Host stats for Silo's resource dashboard (Linux hosts).
-      - /proc/meminfo:/host/proc/meminfo:ro
-      - /proc/stat:/host/proc/stat:ro
-      - /proc/loadavg:/host/proc/loadavg:ro
-    depends_on:
-      silo-postgres:
-        condition: service_healthy
-      silo-redis:
-        condition: service_healthy
-
-  silo-postgres:
-    # Silo requires PostgreSQL with the pgvector extension.
-    image: pgvector/pgvector:pg18
-    container_name: silo-postgres
-    restart: unless-stopped
-    profiles: [silo]
-    shm_size: ${SILO_POSTGRES_SHM_SIZE:-8gb}
-    environment:
-      POSTGRES_USER: silo
-      POSTGRES_PASSWORD: "${SILO_POSTGRES_PASSWORD:-silo}"
-      POSTGRES_DB: silo
-    volumes:
-      - silo-postgres:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U silo"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  silo-redis:
-    image: redis:alpine
-    container_name: silo-redis
-    restart: unless-stopped
-    profiles: [silo]
-    volumes:
-      - silo-redis:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
 volumes:
   media:
   # Optional: store "keep local" downloads on a NAS (the library and .strm
@@ -166,10 +85,3 @@ volumes:
   #     device: "//${JELLYBIRD_NAS_HOST}/${JELLYBIRD_NAS_SHARE}"
   data:
   jellyfin-config:
-  # Silo (only created with --profile silo)
-  silo-plugins:
-  silo-artwork:
-  silo-compat:
-  silo-transcode:
-  silo-postgres:
-  silo-redis:

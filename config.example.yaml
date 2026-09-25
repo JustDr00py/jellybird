@@ -38,7 +38,7 @@ providers:
     requests_per_minute: 280
 
 library:
-  # Root of the media tree jellybird manages. Point Jellyfin/Emby/Silo
+  # Root of the media tree jellybird manages. Point Jellyfin/Emby
   # libraries at <path>/Movies and <path>/Shows.
   # env: JELLYBIRD_LIBRARY_PATH
   path: /media
