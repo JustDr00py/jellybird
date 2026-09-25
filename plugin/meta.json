@@ -1,14 +1,14 @@
 {
   "category": "",
-  "changelog": "",
-  "description": "Trigger jellybird syncs and search/add debrid content without leaving Jellyfin.",
+  "changelog": "v1.1.0.0: Discover, Cloud and Local files tabs; escape TMDB/torrent text on the plugin page.",
+  "description": "Trigger jellybird syncs, discover and add debrid content, and manage your cloud and local copies without leaving Jellyfin.",
   "guid": "23ba68d8-75e0-4f79-b5ea-348ad0e3214f",
   "name": "Jellybird",
   "overview": "",
   "owner": "",
   "targetAbi": "12.1.0.0",
   "timestamp": "0001-01-01T00:00:00.0000000Z",
-  "version": "1.0.0.0",
+  "version": "1.1.0.0",
   "status": "Active",
   "autoUpdate": false,
   "assemblies": []

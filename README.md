@@ -114,6 +114,11 @@ Sign in at `http://<host>:8097` (see [Dashboard login](#dashboard-login)).
   local** / **Save** / **Remove local** per file, a summary of local copies
   linking to **Local files**, **Sync now**, and **Wipe library** to rebuild
   every `.strm` from scratch (your debrid cloud is untouched).
+- **Discover** — browse TMDB's trending, popular, now-playing / on-the-air,
+  upcoming / airing-today and top-rated movies and shows, or any genre.
+  Titles already in your library are marked (shows with an episode count),
+  and **Hide what I have** leaves only what's missing. Adding works the
+  same as Search & Add.
 - **Search & Add** — search TMDB, pick a season and episode for shows, and
   see which releases are cached on your debrid (instant) and which titles
   are already in your library. One click adds a release, named after the
@@ -145,6 +150,18 @@ open **Dashboard → Plugins → Jellybird** and set:
 It lets you search and add debrid content without leaving Jellyfin, and
 adds a **Trigger Sync** scheduled task. It talks to jellybird's API with
 the `X-Jellybird-Token` header; if you change the token, update it here.
+
+Its tabs mirror the dashboard: **Discover**, **Search**, **Cloud** (Keep
+local, Delete), **Local files** (progress, Cancel/Retry/Move/Remove) and
+**Settings**.
+
+**Upgrading from plugin 1.0.0.0:** the compose file used to mount the
+plugin at `plugins/Jellybird_1.0.0.0`; it now uses a version-less
+`plugins/Jellybird`, since Jellyfin takes the version from
+`plugin/meta.json`. After pulling, run `docker compose up -d`, then delete
+the leftover empty `plugins/Jellybird_1.0.0.0` folder from Jellyfin's
+config volume and restart Jellyfin. Plugin settings live in
+`plugins/configurations/` and carry over.
 
 ## Naming and filtering
 
